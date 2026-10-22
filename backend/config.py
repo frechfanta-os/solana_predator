@@ -1,8 +1,20 @@
 """Configuration settings for SOLANA PREDATOR."""
 
 import os
+import secrets
 from typing import List
 from pydantic import BaseModel, Field
+
+
+def _resolve_admin_key() -> str:
+    key = os.getenv("ADMIN_API_KEY")
+    if key and len(key.strip()) > 0:
+        return key.strip()
+    env = os.getenv("ENVIRONMENT", "development").lower()
+    if env == "production":
+        raise ValueError("CRITICAL SECURITY ERROR: ADMIN_API_KEY environment variable MUST be explicitly set in production mode!")
+    # Development/Test fallback
+    return os.getenv("PREDATOR_DEV_ADMIN_KEY", "predator-admin-auth-token-2026")
 
 
 class Settings(BaseModel):
@@ -14,6 +26,9 @@ class Settings(BaseModel):
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
+    ALLOWED_ORIGINS: List[str] = [
+        o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()
+    ]
     
     # Security Boundary Enforcement
     ALLOW_TRANSACTION_SIGNING: bool = False  # HARDCODED FALSE - INVIOLABLE
@@ -35,8 +50,8 @@ class Settings(BaseModel):
     # Database
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "/root/solana_predator/solana_predator.db")
     
-    # Admin API Key for administrative routes
-    ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "predator-admin-auth-token-2026")
+    # Admin API Key for administrative routes (dynamically resolved)
+    ADMIN_API_KEY: str = Field(default_factory=_resolve_admin_key)
     
     # Paper Trading Simulator Parameters
     PAPER_INITIAL_CAPITAL: float = float(os.getenv("PAPER_INITIAL_CAPITAL", "10000.0"))

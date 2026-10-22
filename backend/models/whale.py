@@ -7,9 +7,12 @@ from pydantic import BaseModel, Field
 
 class WhaleActivityType(str, Enum):
     SWAP = "SWAP"
+    SWAP_INFLOW = "SWAP_INFLOW"
+    SWAP_OUTFLOW = "SWAP_OUTFLOW"
     TRANSFER = "TRANSFER"
     DEPOSIT_WITHDRAW = "DEPOSIT_WITHDRAW"
     UNKNOWN_AMBIGUOUS = "UNKNOWN_AMBIGUOUS"
+    FAILED = "FAILED"
 
 
 class WhaleActivity(BaseModel):

@@ -38,20 +38,20 @@ class PaperAccounting:
 
         if latest_snap:
             logger.info(
-                "Reconciliation check: Saved Snapshot Cash=$%.2f, Computed Cash=$%.2f",
+                "Reconciliation check: Saved Snapshot Cash=$%.2f, Computed Ledger Cash=$%.2f",
                 latest_snap.cash_balance_usd,
                 computed_cash,
             )
             self.cash_balance = round(latest_snap.cash_balance_usd, 4)
             self.peak_equity = max(self.initial_capital, latest_snap.peak_equity_usd)
             self.max_drawdown_pct = latest_snap.max_drawdown_pct
-            self.total_realized_pnl = latest_snap.total_realized_pnl_usd
-            self.total_fees_paid = latest_snap.total_fees_paid_usd
+            self.total_realized_pnl = round(latest_snap.total_realized_pnl_usd, 4)
+            self.total_fees_paid = round(latest_snap.total_fees_paid_usd, 4)
         else:
             self.cash_balance = round(computed_cash, 4)
             self.total_realized_pnl = round(realized_pnl_sum, 4)
             self.total_fees_paid = round(fees_sum, 4)
-            logger.info("Initialized fresh paper balance: $%.2f", self.cash_balance)
+            logger.info("Initialized fresh paper balance from ledger: $%.2f", self.cash_balance)
 
     def debit_cash(self, amount: float) -> bool:
         """Debit cash for position entry or fees."""

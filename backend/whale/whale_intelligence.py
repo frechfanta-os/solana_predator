@@ -61,14 +61,42 @@ class WhaleIntelligenceEngine:
         amount_tokens = float(meta.get("amount_tokens", 0.0))
         amount_usd = float(meta.get("amount_usd")) if meta.get("amount_usd") is not None else None
 
+        # Check for failed transaction
+        tx_err = None
+        if parsed_tx:
+            meta_tx = parsed_tx.get("meta") or {}
+            tx_err = meta_tx.get("err") or parsed_tx.get("err")
+        elif meta:
+            tx_err = meta.get("err")
+
+        if tx_err is not None:
+            self._wallet_sample_size[wallet_address] = self._wallet_sample_size.get(wallet_address, 0) + 1
+            return WhaleActivity(
+                activity_id=f"whale_{signature[:12]}_{int(now*1000)}",
+                signature=signature,
+                wallet_address=wallet_address,
+                token_mint=token_mint,
+                activity_type=WhaleActivityType.FAILED,
+                amount_tokens=amount_tokens,
+                amount_usd=amount_usd,
+                timestamp=now,
+                slot=parsed_tx.get("slot") if parsed_tx else None,
+                confidence=0.0,
+                evidence_details={"err": tx_err, "is_failed": True},
+            )
+
         activity_type = WhaleActivityType.UNKNOWN_AMBIGUOUS
         confidence = 0.50
         evidence: Dict[str, Any] = {"raw_available": bool(parsed_tx), "meta": meta}
 
-        if swap_type in ("BUY", "SELL"):
-            activity_type = WhaleActivityType.SWAP
+        if swap_type == "BUY":
+            activity_type = WhaleActivityType.SWAP_INFLOW
             confidence = 0.95
-            evidence["swap_direction"] = swap_type
+            evidence["swap_direction"] = "BUY"
+        elif swap_type == "SELL":
+            activity_type = WhaleActivityType.SWAP_OUTFLOW
+            confidence = 0.95
+            evidence["swap_direction"] = "SELL"
         elif parsed_tx:
             # Inspect parsed Solana instructions if available
             instructions = parsed_tx.get("transaction", {}).get("message", {}).get("instructions", [])
@@ -146,15 +174,17 @@ class WhaleIntelligenceEngine:
         sell_usd = 0.0
 
         for a in recent:
+            if a.activity_type == WhaleActivityType.FAILED:
+                continue
             usd = a.amount_usd or 0.0
-            if a.activity_type == WhaleActivityType.SWAP:
+            if a.activity_type in (WhaleActivityType.SWAP, WhaleActivityType.SWAP_INFLOW, WhaleActivityType.SWAP_OUTFLOW):
                 direction = a.evidence_details.get("swap_direction")
-                if direction == "BUY":
+                if a.activity_type == WhaleActivityType.SWAP_INFLOW or direction == "BUY":
                     buy_usd += usd
-                elif direction == "SELL":
+                elif a.activity_type == WhaleActivityType.SWAP_OUTFLOW or direction == "SELL":
                     sell_usd += usd
             elif a.activity_type == WhaleActivityType.TRANSFER:
-                # Transfers are recorded but NOT counted as buying flow
+                # Transfers are strictly NOT counted as buying flow
                 pass
 
         net_flow = buy_usd - sell_usd
@@ -185,3 +215,24 @@ class WhaleIntelligenceEngine:
             sample_size=len(recent),
             calculated_at=now,
         )
+
+    def get_wallet_profitability_rating(self, wallet_address: str, min_sample_size: int = 10) -> Dict[str, Any]:
+        """Verify historical wallet data before attributing profitability or intelligence."""
+        sample_count = self._wallet_sample_size.get(wallet_address, 0)
+        if sample_count < min_sample_size:
+            return {
+                "wallet_address": wallet_address,
+                "sample_size": sample_count,
+                "min_sample_size": min_sample_size,
+                "is_rated": False,
+                "rating": "UNVERIFIED_INSUFFICIENT_DATA",
+                "reason": f"Sample size {sample_count} is below required threshold of {min_sample_size} verified historical events.",
+            }
+        return {
+            "wallet_address": wallet_address,
+            "sample_size": sample_count,
+            "min_sample_size": min_sample_size,
+            "is_rated": True,
+            "rating": "OBSERVED_SAMPLE_VALID",
+            "reason": f"Sample size {sample_count} satisfies empirical significance requirement.",
+        }

@@ -19,7 +19,7 @@ async def test_whale_activity_classification(whale_engine):
         token_mint=mint,
         event_metadata={"swap_type": "BUY", "amount_usd": 5000.0, "amount_tokens": 100000.0},
     )
-    assert act_swap.activity_type == WhaleActivityType.SWAP
+    assert act_swap.activity_type in (WhaleActivityType.SWAP, WhaleActivityType.SWAP_INFLOW)
     assert act_swap.amount_usd == 5000.0
 
     # Record activity

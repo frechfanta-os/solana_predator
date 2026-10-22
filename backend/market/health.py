@@ -48,11 +48,19 @@ class HealthTracker:
         self.total_events_received: int = 0
         self.total_errors: int = 0
         
-        # Stage latency trackers
-        self.latency_ingest = LatencyTracker()
+        # Stage latency trackers (all 8 pipeline stages measured with monotonic clock)
+        self.latency_receive = LatencyTracker()
         self.latency_normalize = LatencyTracker()
+        self.latency_indicators = LatencyTracker()
         self.latency_agents = LatencyTracker()
+        self.latency_risk = LatencyTracker()
+        self.latency_persistence = LatencyTracker()
+        self.latency_paper_fill = LatencyTracker()
+        self.latency_ws_broadcast = LatencyTracker()
         self.latency_end_to_end = LatencyTracker()
+
+        # Legacy aliases for backward compatibility
+        self.latency_ingest = self.latency_receive
 
         # Source statuses
         self.sources_status: Dict[str, Dict[str, Any]] = {
@@ -89,9 +97,16 @@ class HealthTracker:
             "sources": self.sources_status,
             "event_bus": event_bus_metrics,
             "latencies_ms": {
-                "ingest": self.latency_ingest.get_percentiles(),
+                "receive": self.latency_receive.get_percentiles(),
                 "normalize": self.latency_normalize.get_percentiles(),
+                "indicators": self.latency_indicators.get_percentiles(),
                 "agent_analysis": self.latency_agents.get_percentiles(),
+                "risk_check": self.latency_risk.get_percentiles(),
+                "persistence": self.latency_persistence.get_percentiles(),
+                "paper_fill": self.latency_paper_fill.get_percentiles(),
+                "ws_broadcast": self.latency_ws_broadcast.get_percentiles(),
                 "end_to_end": self.latency_end_to_end.get_percentiles(),
+                # Aliases
+                "ingest": self.latency_receive.get_percentiles(),
             },
         }

@@ -153,6 +153,7 @@ class PaperBroker:
             peak_price_usd=round(executed_price, 8),
         )
         await self.position_manager.add_position(position)
+        await self.accounting.compute_snapshot(self.position_manager.get_open_positions())
         logger.info(
             "EXECUTED SIMULATED BUY: %s (%s) Qty=%.4f @ $%.6f | Fee=$%.2f | Slip=%.1fbps",
             token_mint,
@@ -228,6 +229,7 @@ class PaperBroker:
             fee_usd=fee_usd,
             exit_reason=exit_reason,
         )
+        await self.accounting.compute_snapshot(self.position_manager.get_open_positions())
         logger.info(
             "EXECUTED SIMULATED EXIT: %s Qty=%.4f @ $%.6f | Realized PnL=$%.2f | Reason: %s",
             token_mint,

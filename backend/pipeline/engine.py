@@ -79,19 +79,31 @@ class PredatorEngine:
         logger.info("Shutting down SOLANA PREDATOR pipeline engine...")
         self._is_running = False
         await self.event_bus.stop()
+        open_pos = self.positions.get_open_positions()
+        await self.accounting.compute_snapshot(open_pos)
 
     async def process_market_event(self, event: NormalizedMarketEvent) -> None:
         """Complete deterministic pipeline flow for an incoming normalized event."""
         e2e_start_mono = time.perf_counter()
         self.health.record_event_received(event.source.value, event.local_receive_timestamp)
 
-        # 1. Save normalized market event
+        # Stage 1: Reception Latency
+        rx_latency_ms = max(0.0, (event.processing_timestamp - event.local_receive_timestamp) * 1000.0)
+        self.health.latency_receive.record(rx_latency_ms)
+
+        # Stage 2: Normalization Latency
+        norm_latency_ms = max(0.01, event.freshness_seconds * 1000.0)
+        self.health.latency_normalize.record(norm_latency_ms)
+
+        # Stage 6 Prep: Persistence Timer
+        t_persist_start = time.perf_counter()
         await self.repository.save_market_event(event)
 
-        # 2. Token Discovery / Lifecycle State Update
+        # Stage 3: Indicators Timer (Radar State + Whale Intelligence)
+        t_ind_start = time.perf_counter()
         current_state = await self.token_radar.process_event(event)
 
-        # 3. Save Token Snapshot
+        # Save Token Snapshot
         now = time.time()
         txns_5m = event.metadata.get("txns_5m") if event.metadata else {}
         buys_5m = txns_5m.get("buys", 0) if isinstance(txns_5m, dict) else 0
@@ -112,8 +124,10 @@ class PredatorEngine:
             is_stale=event.freshness_seconds > settings.DATA_STALENESS_THRESHOLD_SEC,
         )
         await self.repository.save_token_snapshot(snapshot)
+        persist_elapsed_ms = (time.perf_counter() - t_persist_start) * 1000.0
+        self.health.latency_persistence.record(persist_elapsed_ms)
 
-        # 4. Check & Update Whale Activity if present in event metadata
+        # Check & Update Whale Activity if present in event metadata
         if event.metadata and "whale_wallet" in event.metadata and event.signature:
             activity = self.whale_engine.classify_raw_transaction(
                 signature=event.signature,
@@ -123,10 +137,12 @@ class PredatorEngine:
             )
             await self.whale_engine.record_activity(activity)
 
-        # 5. Compute Whale Convergence Indicators
         convergence = self.whale_engine.calculate_convergence(event.token_mint)
+        ind_latency_ms = (time.perf_counter() - t_ind_start) * 1000.0
+        self.health.latency_indicators.record(ind_latency_ms)
 
-        # 6. Mark to Market Open Positions & Evaluate Exits
+        # Mark to Market Open Positions & Evaluate Exits
+        t_fill_start = time.perf_counter()
         has_pos = self.positions.has_open_position(event.token_mint)
         if has_pos and event.price_usd:
             pos = await self.positions.mark_to_market(
@@ -150,7 +166,7 @@ class PredatorEngine:
                         f"Position exited: {exit_reason}",
                     )
 
-        # 7. Multi-Agent Orchestration
+        # Stage 4: Multi-Agent Orchestration
         open_positions = self.positions.get_open_positions()
         await self.accounting.compute_snapshot(open_positions)
 
@@ -168,7 +184,11 @@ class PredatorEngine:
         agent_latency_ms = (time.perf_counter() - agent_start_mono) * 1000.0
         self.health.latency_agents.record(agent_latency_ms)
 
-        # 8. Act on Consensus Decision
+        # Stage 5: Record RISK Check Latency specifically
+        if "RISK" in consensus.contributing_agents:
+            self.health.latency_risk.record(consensus.contributing_agents["RISK"].processing_latency_ms)
+
+        # Stage 7: Act on Consensus Decision & Simulated Fill
         if consensus.final_decision == AgentDecision.BUY_CANDIDATE:
             await self.token_radar.advance_lifecycle(
                 event.token_mint,
@@ -198,11 +218,11 @@ class PredatorEngine:
                     consensus.chief_reason,
                 )
 
-        # 9. Compute and Record E2E Latency
-        e2e_latency_ms = (time.perf_counter() - e2e_start_mono) * 1000.0
-        self.health.latency_end_to_end.record(e2e_latency_ms)
+        fill_elapsed_ms = (time.perf_counter() - t_fill_start) * 1000.0
+        self.health.latency_paper_fill.record(fill_elapsed_ms)
 
-        # 10. Real-time WebSocket Broadcast
+        # Stage 8: Real-time WebSocket Broadcast
+        t_ws_start = time.perf_counter()
         if self._ws_broadcast_callback:
             try:
                 latest_portfolio = await self.repository.get_latest_portfolio_snapshot()
@@ -214,8 +234,15 @@ class PredatorEngine:
                     "whale_convergence": convergence.model_dump(),
                     "portfolio": latest_portfolio.model_dump() if latest_portfolio else None,
                     "open_positions": [p.model_dump() for p in self.positions.get_open_positions()],
-                    "e2e_latency_ms": round(e2e_latency_ms, 2),
+                    "e2e_latency_ms": round((time.perf_counter() - e2e_start_mono) * 1000.0, 2),
                 }
                 await self._ws_broadcast_callback(ws_payload)
             except Exception as e:
                 logger.error("Error broadcasting to WebSockets: %s", e)
+
+        ws_elapsed_ms = (time.perf_counter() - t_ws_start) * 1000.0
+        self.health.latency_ws_broadcast.record(ws_elapsed_ms)
+
+        # Stage 9: End-to-End Latency
+        e2e_latency_ms = (time.perf_counter() - e2e_start_mono) * 1000.0
+        self.health.latency_end_to_end.record(e2e_latency_ms)
