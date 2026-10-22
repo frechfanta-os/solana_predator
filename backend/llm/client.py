@@ -50,22 +50,33 @@ class LLMClient:
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        model_pool: Optional[List[str]] = None,
         timeout_seconds: Optional[float] = None,
         max_retries: Optional[int] = None,
         max_concurrency: Optional[int] = None,
         auth_header_style: Optional[str] = None,
         session: Optional[aiohttp.ClientSession] = None,
         enabled: Optional[bool] = None,
+        provider_name: Optional[str] = None,
     ):
         self.base_url = (base_url or settings.LLM_API_BASE_URL).rstrip("/")
         self.api_key = api_key if api_key is not None else settings.LLM_API_KEY
+        self.provider_name = provider_name or settings.LLM_PROVIDER
         self.model = model or settings.LLM_MODEL
+
+        # Multi-model pool for quota & error failover
+        raw_pool = model_pool or settings.LLM_MODEL_POOL
+        self.model_pool: List[str] = list(raw_pool) if raw_pool else [self.model]
+        if self.model not in self.model_pool:
+            self.model_pool.insert(0, self.model)
+
+        self.rotation_enabled = settings.LLM_ROTATION_ENABLED
+        self._current_model_idx = 0
         self.timeout_seconds = timeout_seconds or settings.LLM_TIMEOUT_SECONDS
         self.max_retries = max_retries if max_retries is not None else settings.LLM_MAX_RETRIES
         self.max_concurrency = max_concurrency or settings.LLM_MAX_CONCURRENCY
         self.auth_header_style = (auth_header_style or settings.LLM_AUTH_HEADER_STYLE).lower()
         self.enabled = enabled if enabled is not None else settings.LLM_ENABLED
-        self.provider_name = settings.LLM_PROVIDER
 
         self._session = session
         self._owns_session = session is None
@@ -89,6 +100,10 @@ class LLMClient:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        if self.provider_name == "openrouter" or "openrouter.ai" in self.base_url:
+            headers["HTTP-Referer"] = settings.OPENROUTER_HTTP_REFERER
+            headers["X-Title"] = settings.OPENROUTER_APP_TITLE
+
         if self.api_key:
             if self.auth_header_style in ("bearer", "both"):
                 headers["Authorization"] = f"Bearer {self.api_key}"
@@ -123,156 +138,197 @@ class LLMClient:
             await self._session.close()
 
     async def complete(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
-        """Execute chat completion request with retry, backoff, and concurrency bounding."""
+        """Execute chat completion request with multi-model quota failover, retry, and concurrency bounding."""
         if not self.base_url:
             raise LLMConfigurationError("LLM base URL is not configured")
 
         url = self.get_endpoint_url()
         headers = self.get_request_headers()
-        payload = request.model_dump(exclude_none=True)
 
-        logger.debug(
-            "Dispatching LLM request to %s (model: %s, headers: %s)",
-            url,
-            request.model,
-            self.mask_headers(headers),
-        )
+        # Build prioritized list of models to try (starting from requested model or active model in pool)
+        primary_model = request.model or self.model_pool[self._current_model_idx % len(self.model_pool)]
+        models_to_try = [primary_model]
+        for m in self.model_pool:
+            if m not in models_to_try:
+                models_to_try.append(m)
 
-        attempt = 0
         last_exception: Optional[Exception] = None
 
-        while attempt <= self.max_retries:
-            start_mono = time.perf_counter()
-            try:
-                async with self._semaphore:
-                    session = await self._get_session()
-                    timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
-                    
-                    async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
-                        status = resp.status
-                        body_text = await resp.text()
+        for model_idx, candidate_model in enumerate(models_to_try):
+            attempt = 0
+            model_payload = request.model_copy(update={"model": candidate_model}).model_dump(exclude_none=True)
 
-                        latency_ms = (time.perf_counter() - start_mono) * 1000.0
+            logger.debug(
+                "Dispatching LLM request to %s (model: %s [%d/%d], headers: %s)",
+                url,
+                candidate_model,
+                model_idx + 1,
+                len(models_to_try),
+                self.mask_headers(headers),
+            )
 
-                        # 1. Authentication / Permission Errors (Never retry)
-                        if status in (401, 403):
-                            msg = f"LLM Authentication failed (HTTP {status}): {body_text[:200]}"
-                            self._record_failure(msg)
-                            raise LLMAuthenticationError(msg, status_code=status)
+            while attempt <= self.max_retries:
+                start_mono = time.perf_counter()
+                try:
+                    async with self._semaphore:
+                        session = await self._get_session()
+                        timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
 
-                        # 2. Rate Limit (429) -> Retryable
-                        if status == 429:
-                            msg = f"LLM Rate limit reached (HTTP 429): {body_text[:200]}"
-                            last_exception = LLMRateLimitError(msg, status_code=429)
-                            attempt += 1
-                            if attempt <= self.max_retries:
-                                delay = min(4.0, (2 ** attempt) * 0.5) * random.uniform(0.8, 1.2)
-                                logger.warning("Rate limit on %s. Retrying in %.2fs (attempt %d/%d)...", self.model, delay, attempt, self.max_retries)
-                                await asyncio.sleep(delay)
-                                continue
-                            self._record_failure(msg)
-                            raise last_exception
+                        async with session.post(url, json=model_payload, headers=headers, timeout=timeout) as resp:
+                            status = resp.status
+                            body_text = await resp.text()
 
-                        # 3. Server Errors (500, 502, 503, 504) -> Retryable
-                        if status >= 500:
-                            msg = f"LLM Server error (HTTP {status}): {body_text[:200]}"
-                            last_exception = LLMServerError(msg, status_code=status)
-                            attempt += 1
-                            if attempt <= self.max_retries:
-                                delay = min(4.0, (2 ** attempt) * 0.5) * random.uniform(0.8, 1.2)
-                                logger.warning("Server error %d on %s. Retrying in %.2fs (attempt %d/%d)...", status, self.model, delay, attempt, self.max_retries)
-                                await asyncio.sleep(delay)
-                                continue
-                            self._record_failure(msg)
-                            raise last_exception
+                            latency_ms = (time.perf_counter() - start_mono) * 1000.0
 
-                        # 4. Client Request Errors (400, 404, 422) -> Non-retryable
-                        if status >= 400:
-                            msg = f"LLM Client error (HTTP {status}): {body_text[:200]}"
-                            self._record_failure(msg)
-                            raise LLMError(msg, status_code=status)
+                            # 1. Authentication / Permission Errors (Never retry, not model-specific)
+                            if status in (401, 403):
+                                msg = f"LLM Authentication failed (HTTP {status}): {body_text[:200]}"
+                                self._record_failure(msg)
+                                raise LLMAuthenticationError(msg, status_code=status)
 
-                        # 5. Success Validation
-                        if not body_text or not body_text.strip():
-                            msg = "LLM returned empty response body"
-                            self._record_failure(msg)
-                            raise LLMResponseFormatError(msg, status_code=status)
+                            # 2. Rate Limit (429) -> Retry on current model with backoff, then failover to next model in pool
+                            if status == 429:
+                                msg = f"LLM Rate limit reached on {candidate_model} (HTTP 429): {body_text[:200]}"
+                                last_exception = LLMRateLimitError(msg, status_code=429)
+                                attempt += 1
+                                if attempt <= self.max_retries:
+                                    delay = min(4.0, (2 ** attempt) * 0.5) * random.uniform(0.8, 1.2)
+                                    logger.warning("Rate limit on %s. Retrying in %.2fs (attempt %d/%d)...", candidate_model, delay, attempt, self.max_retries)
+                                    await asyncio.sleep(delay)
+                                    continue
+                                self._record_failure(msg)
+                                if model_idx + 1 < len(models_to_try):
+                                    next_m = models_to_try[model_idx + 1]
+                                    logger.warning(
+                                        "Quota/Rate limit exhausted on %s. Rotating to fallback model %s in pool...",
+                                        candidate_model,
+                                        next_m,
+                                    )
+                                    break  # failover to next model
+                                raise last_exception
 
-                        try:
-                            data = json.loads(body_text)
-                        except json.JSONDecodeError as e:
-                            msg = f"Malformed JSON from LLM: {e}"
-                            self._record_failure(msg)
-                            raise LLMResponseFormatError(msg, status_code=status)
+                            # 3. Server Errors (500, 502, 503, 504) -> Retry then failover to next model if available
+                            if status >= 500:
+                                msg = f"LLM Server error (HTTP {status}) on {candidate_model}: {body_text[:200]}"
+                                last_exception = LLMServerError(msg, status_code=status)
+                                attempt += 1
+                                if attempt <= self.max_retries:
+                                    delay = min(4.0, (2 ** attempt) * 0.5) * random.uniform(0.8, 1.2)
+                                    logger.warning("Server error %d on %s. Retrying in %.2fs (attempt %d/%d)...", status, candidate_model, delay, attempt, self.max_retries)
+                                    await asyncio.sleep(delay)
+                                    continue
+                                self._record_failure(msg)
+                                if model_idx + 1 < len(models_to_try):
+                                    next_m = models_to_try[model_idx + 1]
+                                    logger.warning(
+                                        "Server error %d on %s. Failing over to model %s...",
+                                        status,
+                                        candidate_model,
+                                        next_m,
+                                    )
+                                    break
+                                raise last_exception
 
-                        choices_raw = data.get("choices", [])
-                        if not choices_raw or not isinstance(choices_raw, list):
-                            msg = "LLM response missing 'choices' array"
-                            self._record_failure(msg)
-                            raise LLMResponseFormatError(msg, status_code=status)
+                            # 4. Client Request Errors (400, 404, 422) -> Try next model if available
+                            if status >= 400:
+                                msg = f"LLM Client error (HTTP {status}) on {candidate_model}: {body_text[:200]}"
+                                last_exception = LLMError(msg, status_code=status)
+                                self._record_failure(msg)
+                                if model_idx + 1 < len(models_to_try):
+                                    logger.warning("Client error on %s. Trying next candidate model...", candidate_model)
+                                    break
+                                raise last_exception
 
-                        parsed_choices = []
-                        for c in choices_raw:
-                            msg_dict = c.get("message", {})
-                            content = msg_dict.get("content", "")
-                            parsed_choices.append(
-                                ChatCompletionChoice(
-                                    index=c.get("index", 0),
-                                    message=ChatMessage(
-                                        role=msg_dict.get("role", "assistant"),
-                                        content=content if content is not None else "",
-                                    ),
-                                    finish_reason=c.get("finish_reason", "stop"),
+                            # 5. Success Validation
+                            if not body_text or not body_text.strip():
+                                msg = f"LLM returned empty response body ({candidate_model})"
+                                self._record_failure(msg)
+                                raise LLMResponseFormatError(msg, status_code=status)
+
+                            try:
+                                data = json.loads(body_text)
+                            except json.JSONDecodeError as e:
+                                msg = f"Malformed JSON from LLM ({candidate_model}): {e}"
+                                self._record_failure(msg)
+                                raise LLMResponseFormatError(msg, status_code=status)
+
+                            choices_raw = data.get("choices", [])
+                            if not choices_raw or not isinstance(choices_raw, list):
+                                msg = f"LLM response missing 'choices' array ({candidate_model})"
+                                self._record_failure(msg)
+                                raise LLMResponseFormatError(msg, status_code=status)
+
+                            parsed_choices = []
+                            for c in choices_raw:
+                                msg_dict = c.get("message", {})
+                                content = msg_dict.get("content")
+                                if content is None:
+                                    content = c.get("text", "")
+                                parsed_choices.append(
+                                    ChatCompletionChoice(
+                                        index=c.get("index", 0),
+                                        message=ChatMessage(
+                                            role=msg_dict.get("role", "assistant"),
+                                            content=content if content is not None else "",
+                                        ),
+                                        finish_reason=c.get("finish_reason", "stop"),
+                                    )
                                 )
+
+                            usage_raw = data.get("usage")
+                            usage = None
+                            if usage_raw and isinstance(usage_raw, dict):
+                                usage = ChatCompletionUsage(
+                                    prompt_tokens=usage_raw.get("prompt_tokens", 0),
+                                    completion_tokens=usage_raw.get("completion_tokens", 0),
+                                    total_tokens=usage_raw.get("total_tokens", 0),
+                                )
+
+                            response = ChatCompletionResponse(
+                                id=data.get("id", f"chatcmpl_{int(time.time()*1000)}"),
+                                object=data.get("object", "chat.completion"),
+                                created=data.get("created", int(time.time())),
+                                model=data.get("model", candidate_model),
+                                choices=parsed_choices,
+                                usage=usage,
+                                latency_ms=round(latency_ms, 2),
                             )
 
-                        usage_raw = data.get("usage")
-                        usage = None
-                        if usage_raw and isinstance(usage_raw, dict):
-                            usage = ChatCompletionUsage(
-                                prompt_tokens=usage_raw.get("prompt_tokens", 0),
-                                completion_tokens=usage_raw.get("completion_tokens", 0),
-                                total_tokens=usage_raw.get("total_tokens", 0),
-                            )
+                            self._record_success(latency_ms)
+                            # Update model pointer for smooth round-robin quota rotation
+                            if self.rotation_enabled and len(self.model_pool) > 1:
+                                self._current_model_idx = (self._current_model_idx + 1) % len(self.model_pool)
+                            return response
 
-                        response = ChatCompletionResponse(
-                            id=data.get("id", f"chatcmpl_{int(time.time()*1000)}"),
-                            object=data.get("object", "chat.completion"),
-                            created=data.get("created", int(time.time())),
-                            model=data.get("model", request.model),
-                            choices=parsed_choices,
-                            usage=usage,
-                            latency_ms=round(latency_ms, 2),
-                        )
-
-                        self._record_success(latency_ms)
-                        return response
-
-            except asyncio.CancelledError:
-                logger.info("LLM completion request cancelled")
-                raise
-            except asyncio.TimeoutError:
-                attempt += 1
-                msg = f"LLM request timed out after {self.timeout_seconds:.1f}s"
-                last_exception = LLMTimeoutError(msg)
-                if attempt <= self.max_retries:
-                    delay = min(4.0, (2 ** attempt) * 0.5) * random.uniform(0.8, 1.2)
-                    logger.warning("Timeout on %s. Retrying in %.2fs (attempt %d/%d)...", self.model, delay, attempt, self.max_retries)
-                    await asyncio.sleep(delay)
-                    continue
-                self._record_failure(msg)
-                raise last_exception
-            except aiohttp.ClientError as e:
-                attempt += 1
-                msg = f"LLM connection error: {e}"
-                last_exception = LLMUnavailableError(msg)
-                if attempt <= self.max_retries:
-                    delay = min(4.0, (2 ** attempt) * 0.5) * random.uniform(0.8, 1.2)
-                    logger.warning("Connection failure on %s. Retrying in %.2fs (attempt %d/%d)...", self.model, delay, attempt, self.max_retries)
-                    await asyncio.sleep(delay)
-                    continue
-                self._record_failure(msg)
-                raise last_exception
+                except asyncio.CancelledError:
+                    logger.info("LLM completion request cancelled")
+                    raise
+                except asyncio.TimeoutError:
+                    attempt += 1
+                    msg = f"LLM request timed out on {candidate_model} after {self.timeout_seconds:.1f}s"
+                    last_exception = LLMTimeoutError(msg)
+                    if model_idx + 1 < len(models_to_try):
+                        logger.warning("Timeout on %s. Failing over to next model in pool...", candidate_model)
+                        break
+                    if attempt <= self.max_retries:
+                        delay = min(4.0, (2 ** attempt) * 0.5) * random.uniform(0.8, 1.2)
+                        await asyncio.sleep(delay)
+                        continue
+                    self._record_failure(msg)
+                    break
+                except aiohttp.ClientError as e:
+                    attempt += 1
+                    msg = f"LLM connection error on {candidate_model}: {e}"
+                    last_exception = LLMUnavailableError(msg)
+                    if model_idx + 1 < len(models_to_try):
+                        logger.warning("Connection error on %s. Failing over...", candidate_model)
+                        break
+                    if attempt <= self.max_retries:
+                        delay = min(4.0, (2 ** attempt) * 0.5) * random.uniform(0.8, 1.2)
+                        await asyncio.sleep(delay)
+                        continue
+                    self._record_failure(msg)
+                    break
 
         if last_exception:
             raise last_exception
@@ -318,6 +374,9 @@ class LLMClient:
             "available": avail_state == "AVAILABLE",
             "provider": self.provider_name,
             "model": self.model,
+            "active_model": self.model_pool[self._current_model_idx % len(self.model_pool)],
+            "model_pool": self.model_pool,
+            "rotation_enabled": self.rotation_enabled,
             "base_url": self.base_url,
             "api_key_configured": has_key,
             "timeout_seconds": self.timeout_seconds,
@@ -460,18 +519,15 @@ class LLMClient:
                 )
             raw_text = resp.choices[0].message.content.strip()
 
-            if "```" in raw_text:
-                parts = raw_text.split("```")
-                for part in parts:
-                    clean = part.strip()
-                    if clean.startswith("json"):
-                        clean = clean[4:].strip()
-                    if clean.startswith("{") and clean.endswith("}"):
-                        raw_text = clean
-                        break
+            # Robust JSON block extraction (handles markdown fences, preamble, and conversational commentary)
+            cleaned_json = raw_text
+            start_brace = raw_text.find("{")
+            end_brace = raw_text.rfind("}")
+            if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                cleaned_json = raw_text[start_brace : end_brace + 1]
 
             try:
-                parsed_data = json.loads(raw_text)
+                parsed_data = json.loads(cleaned_json)
             except json.JSONDecodeError as e:
                 return LLMAdvisoryResult(
                     status="LLM_INVALID_RESPONSE",

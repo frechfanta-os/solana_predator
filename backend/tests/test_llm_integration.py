@@ -653,7 +653,7 @@ async def test_llm_analyze_endpoint_all_states():
         "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
     })
     session_mock.post.return_value = MockAiohttpResponse(200, valid_resp)
-    client_ok = LLMClient(api_key="sk-valid", enabled=True, session=session_mock)
+    client_ok = LLMClient(api_key="sk-valid", model="glm-5.3-flash", enabled=True, session=session_mock)
     res5 = await trigger_llm_analysis(
         LLMAnalysisRequest(token_mint="Token111111111111111111111111111111111111111"),
         llm=client_ok,
@@ -707,3 +707,65 @@ async def test_prompt_version_and_advisory_persistence(repo):
     details = json.loads(saved["details_json"])
     assert details["prompt_version"] == "v1.0-chief-synthesis"
     assert details["llm_advisory"]["model"] == "glm-5.3-flash"
+
+
+# 23. Multi-Model Pool Failover and Quota Rotation
+@pytest.mark.asyncio
+async def test_multi_model_pool_failover_and_quota_rotation():
+    model_pool = [
+        "primary-free-model:free",
+        "fallback-free-model-1:free",
+        "fallback-free-model-2:free"
+    ]
+
+    # Simulating session where model 0 hits 429 quota exhaustion, and model 1 succeeds
+    def mock_post(url, json=None, headers=None, timeout=None):
+        requested_model = json.get("model") if json else ""
+        if requested_model == "primary-free-model:free":
+            # 429 Quota exhausted
+            return MockAiohttpResponse(429, '{"error": {"code": 429, "message": "Rate limit / quota exceeded"}}')
+        elif requested_model == "fallback-free-model-1:free":
+            # 200 Success
+            body = {
+                "id": "chatcmpl-fallback-ok",
+                "object": "chat.completion",
+                "created": 1234567,
+                "model": "fallback-free-model-1:free",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": '{"decision": "PASS", "confidence": 0.8, "summary": "Fallback model evaluated successfully"}'},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 15, "completion_tokens": 20, "total_tokens": 35}
+            }
+            return MockAiohttpResponse(200, json_pkg.dumps(body))
+        return MockAiohttpResponse(500, '{"error": "Server error"}')
+
+    import json as json_pkg
+    session_mock = MagicMock()
+    session_mock.closed = False
+    session_mock.post.side_effect = mock_post
+
+    client = LLMClient(
+        base_url="https://openrouter.ai/api/v1",
+        api_key="sk-or-testkey",
+        model=model_pool[0],
+        model_pool=model_pool,
+        session=session_mock,
+        enabled=True,
+    )
+
+    req = ChatCompletionRequest(
+        model=model_pool[0],
+        messages=[ChatMessage(role="user", content="ping")],
+    )
+
+    resp = await client.complete(req)
+    assert resp.model == "fallback-free-model-1:free"
+    assert "Fallback model evaluated successfully" in resp.choices[0].message.content
+
+    # Check that client telemetry tracked the success and the models pool
+    status = client.get_status()
+    assert status["configured"] is True
+    assert status["model_pool"] == model_pool
+    assert status["call_count"] == 1

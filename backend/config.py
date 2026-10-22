@@ -6,6 +6,27 @@ from typing import List
 from pydantic import BaseModel, Field
 
 
+def _load_dotenv(env_path: str = "/root/solana_predator/.env") -> None:
+    """Load key-value pairs from local .env into os.environ if not already present."""
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k not in os.environ:
+                        os.environ[k] = v
+        except Exception:
+            pass
+
+
+_load_dotenv()
+
+
 def _resolve_admin_key() -> str:
     key = os.getenv("ADMIN_API_KEY")
     if key and len(key.strip()) > 0:
@@ -67,15 +88,31 @@ class Settings(BaseModel):
     DEDUPLICATION_CACHE_SIZE: int = int(os.getenv("DEDUPLICATION_CACHE_SIZE", "50000"))
     DEDUPLICATION_TTL_SEC: float = float(os.getenv("DEDUPLICATION_TTL_SEC", "600.0"))
     
-    # LLM Configuration (OpenAI Chat Completions Compatible - GLM-5.3-Flash)
+    # LLM Configuration (OpenAI Chat Completions Compatible - Multi-Model Fallback & Rotation)
     LLM_ENABLED: bool = os.getenv("LLM_ENABLED", "false").lower() in ("true", "1", "yes")
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "space_z")
+    LLM_PROVIDER: str = os.getenv(
+        "LLM_PROVIDER",
+        "openrouter" if "openrouter" in os.getenv("LLM_API_BASE_URL", "").lower() or os.getenv("LLM_API_KEY", "").startswith("sk-or-")
+        else "space_z"
+    )
     LLM_API_BASE_URL: str = os.getenv(
         "LLM_API_BASE_URL",
-        "https://preview-chat-5b88a64e-2cfd-4430-8a11-8a8190f3f6b2.space-z.ai/api/provider/v1"
+        "https://openrouter.ai/api/v1" if os.getenv("LLM_PROVIDER") == "openrouter" or os.getenv("LLM_API_KEY", "").startswith("sk-or-")
+        else "https://preview-chat-5b88a64e-2cfd-4430-8a11-8a8190f3f6b2.space-z.ai/api/provider/v1"
     ).rstrip("/")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "glm-5.3-flash")
+    LLM_MODEL: str = os.getenv(
+        "LLM_MODEL",
+        "poolside/laguna-s-2.1:free" if os.getenv("LLM_PROVIDER") == "openrouter" or os.getenv("LLM_API_KEY", "").startswith("sk-or-")
+        else "glm-5.3-flash"
+    )
+    LLM_MODEL_POOL: List[str] = [
+        m.strip() for m in os.getenv(
+            "LLM_MODEL_POOL",
+            "poolside/laguna-s-2.1:free,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,nvidia/nemotron-3.5-super-vl:free,dots-studio/dots-3-note-preview:free,liquid/lfm-2.5-2.6b:free,nvidia/nemotron-3-ultra-550b-a55b:free,cohere/north-mini-code:free"
+        ).split(",") if m.strip()
+    ]
+    LLM_ROTATION_ENABLED: bool = os.getenv("LLM_ROTATION_ENABLED", "true").lower() in ("true", "1", "yes")
     LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "15.0"))
     LLM_MAX_RETRIES: int = int(os.getenv("LLM_MAX_RETRIES", "3"))
     LLM_MAX_CONCURRENCY: int = int(os.getenv("LLM_MAX_CONCURRENCY", "5"))
@@ -83,6 +120,8 @@ class Settings(BaseModel):
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
     LLM_STREAM: bool = os.getenv("LLM_STREAM", "false").lower() in ("true", "1", "yes")
     LLM_AUTH_HEADER_STYLE: str = os.getenv("LLM_AUTH_HEADER_STYLE", "bearer")  # bearer, x-api-key, or both
+    OPENROUTER_HTTP_REFERER: str = os.getenv("OPENROUTER_HTTP_REFERER", "https://github.com/ghdinteractivestudio/solana_predator")
+    OPENROUTER_APP_TITLE: str = os.getenv("OPENROUTER_APP_TITLE", "SOLANA PREDATOR")
     
     # Whale Tracking Configuration (Tracked public wallets)
     TRACKED_WHALE_WALLETS: List[str] = [

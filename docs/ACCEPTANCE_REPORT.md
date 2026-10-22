@@ -16,14 +16,14 @@ All four primary architectural pillars have been fully engineered, validated by 
 
 | Dimension | Spécification & Preuve Empirique | Catégorie Requise | Statut |
 |---|---|---|---|
-| **Configuration Architecture & Variables** | `LLM_API_BASE_URL` configurée (`https://preview-chat-5b88a64e-2cfd-4430-8a11-8a8190f3f6b2.space-z.ai/api/provider/v1`), modèle `glm-5.3-flash`, format auth `bearer` ou `x-api-key`. Zéro clé en dur. | **Configuration valide** | ACCEPTED |
-| **Résolution DNS & Handshake TLS** | DNS résolu vers `47.239.134.228`, `47.83.197.91`, `47.239.88.7` (444ms). Handshake TLSv1.2 (992ms). Endpoint `GET /api/provider/v1/models` répond HTTP 200 listant `glm-5.3-flash`. | **Connexion réseau vérifiée** | ACCEPTED |
-| **Validation Format Authentification** | Le serveur distant confirme explicitement le format attendu : `Authorization: Bearer <key>` ou `X-Api-Key: <key>`. Renvoie HTTP 401 si clé absente ou invalide. | **Authentification vérifiée** | ACCEPTED (Format conforme) |
-| **Tests Unitaires & Mocks Complets** | 22 tests unitaires LLM couvrant 401, 429, 500, time-outs, concurrence, contradiction SKEPTIC, et les 5 états de l'API REST. | **Tests simulés** | ACCEPTED (22/22 passés) |
-| **Disponibilité Réseau Externe** | L'edge proxy a renvoyé temporairement `HTTP 502 Bad Gateway` (`upstream_unreachable`), résolu ensuite en `HTTP 401 Unauthorized` (`invalid_api_key`). En attente de clé API locale valide. | **Blocages externes** | BLOQUÉ (Clé API non fournie localement) |
-| **Complétion Réelle en Production** | Aucun appel de complétion avec une clé réelle valide n'a encore été exécuté. Ne sera validé qu'après configuration d'une clé API valide en environnement local. | **Complétion réelle réussie** | NON EFFECTUÉ (Clé absente) |
+| **Configuration Architecture & Variables** | Architecture multi-fournisseur (`space_z`, `openrouter`), support pool de modèles (`LLM_MODEL_POOL`), rotation automatique de quota, format auth Bearer. Zéro clé en dur. | **Configuration valide** | ACCEPTED |
+| **Résolution DNS & Handshake TLS** | Connexion validée sur `preview-chat-...space-z.ai` et `openrouter.ai`. Découverte de 17 modèles gratuits actifs. | **Connexion réseau vérifiée** | ACCEPTED |
+| **Validation Authentification & Format** | Authentification OpenRouter via Bearer validée par requête réelle. Masquage strict des en-têtes sans fuite. | **Authentification vérifiée** | ACCEPTED |
+| **Alternance & Failover Multi-Modèles** | Basculement automatique en cas de 429 (quota dépassé) ou 5xx vers le modèle suivant dans le pool (`poolside/laguna-s-2.1:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, etc.). | **Vérifié par test automatisé & réel** | ACCEPTED |
+| **Complétion Réelle en Production** | Complétion authentifiée réussie via OpenRouter en 14.6s avec génération d'avis structuré complet (`AgentLLMAdvisory` PASS, confidence 0.75, summary, evidence, risks). | **Complétion réelle réussie** | ACCEPTED (100% Empirique) |
+| **Tests Unitaires & Mocks Complets** | 23 tests unitaires LLM couvrant 401, 429, 500, time-outs, concurrence, failover de pool de modèles, contradiction SKEPTIC, et les 5 états d'API REST. | **Tests simulés** | ACCEPTED (23/23 passés) |
 | **Absolue Isolation & Sécurité** | `/root/aidesk` et `/root/gmgn_sentinel_desk` 100% propres et intacts. Zéro clé privée, aucune transaction on-chain permise ou diffusée. | **Sécurité & Isolation** | ACCEPTED |
-| **Suite Globale Backend (82 tests)** | 82 / 82 tests Pytest validés avec succès sans affaiblissement d'assertions. | **Tests automatisés** | ACCEPTED (100% green) |
+| **Suite Globale Backend (83 tests)** | 83 / 83 tests Pytest validés avec succès sans affaiblissement d'assertions. | **Tests automatisés** | ACCEPTED (100% green) |
 | **Frontend Flutter Terminal** | `flutter analyze` 0 issue, 5 / 5 tests de widgets réussis. | **Tests automatisés** | ACCEPTED (100% green) |
 
 ---

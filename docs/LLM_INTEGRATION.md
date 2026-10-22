@@ -21,10 +21,12 @@ La configuration est gérée de manière générique et indépendante du code m�
 | Variable d'Environnement | Description | Valeur par Défaut |
 |---|---|---|
 | `LLM_ENABLED` | Activation globale des requêtes LLM | `false` |
-| `LLM_PROVIDER` | Nom logique du fournisseur | `space_z` |
-| `LLM_API_BASE_URL` | Base URL du point d'entrée HTTP | `https://preview-chat-5b88a64e-2cfd-4430-8a11-8a8190f3f6b2.space-z.ai/api/provider/v1` |
+| `LLM_PROVIDER` | Nom logique du fournisseur (`openrouter`, `space_z`) | `openrouter` / `space_z` |
+| `LLM_API_BASE_URL` | Base URL du point d'entrée HTTP | `https://openrouter.ai/api/v1` |
 | `LLM_API_KEY` | Clé d'authentification (secrète) | `sk-...` (renseignée dans `.env`) |
-| `LLM_MODEL` | Identifiant du modèle cible | `glm-5.3-flash` |
+| `LLM_MODEL` | Identifiant du modèle principal | `poolside/laguna-s-2.1:free` |
+| `LLM_MODEL_POOL` | Pool de modèles gratuits pour alternance et failover | `poolside/laguna-s-2.1:free,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,...` |
+| `LLM_ROTATION_ENABLED` | Activation de la rotation de charge entre modèles | `true` |
 | `LLM_TIMEOUT_SECONDS` | Délai d'expiration maximal par requête | `15.0` |
 | `LLM_MAX_RETRIES` | Nombre maximal de tentatives sur 429/5xx | `3` |
 | `LLM_MAX_CONCURRENCY` | Nombre maximal de requêtes simultanées | `5` |

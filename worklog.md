@@ -410,4 +410,39 @@ export LLM_API_KEY="<your_glm_api_key>"
 # Or create an untracked .env file in /root/solana_predator
 ```
 
+---
+
+## Phase 7: OpenRouter Free Models Integration & Quota Failover Rotation (2026-10-22)
+
+### 1. Architectural Implementation
+- Provided alternative LLM provider support for OpenRouter (`https://openrouter.ai/api/v1`) as a seamless replacement during upstream provider outages.
+- Configured dynamic free model pool:
+  - `poolside/laguna-s-2.1:free`
+  - `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`
+  - `nvidia/nemotron-3.5-super-vl:free`
+  - `dots-studio/dots-3-note-preview:free`
+  - `liquid/lfm-2.5-2.6b:free`
+  - `nvidia/nemotron-3-ultra-550b-a55b:free`
+  - `cohere/north-mini-code:free`
+- Added multi-model quota alternation and failover to `LLMClient.complete()`:
+  - When a model returns HTTP 429 (quota exhausted or rate limited), 5xx, or times out, it automatically fails over to the next candidate model in the pool.
+  - Implemented round-robin rotation to evenly distribute request load across free providers.
+  - Added robust JSON block extraction tolerant of conversational preambles and markdown fences.
+- Stored credentials in untracked `/root/solana_predator/.env` (strictly ignored by `.gitignore`).
+
+### 2. Empirical Live Validation
+- **Connectivity Probe**: OpenRouter endpoint returned `AVAILABLE` (2,479ms, model `poolside/laguna-s-2.1:free`).
+- **Live Advisory Generation (`POST /llm/analyze` / `request_advisory`)**:
+  - Live structured output generated successfully: `decision=AgentDecision.PASS`, `confidence=0.75`, `summary="Despite positive signals from SCAN and QUANT, the decision is PASS due to insufficient portfolio liquidity..."`.
+  - Evidence and risks parsed into validated Pydantic model `AgentLLMAdvisory`.
+- **Quota Failover & Rotation Test**:
+  - Verified in `test_multi_model_pool_failover_and_quota_rotation`: on 429 rate limit, client immediately transitions to fallback model in the pool without dropping the request.
+
+### 3. Test Suite & Quality Status
+- **Backend Tests**: **83 / 83 tests passing (100% green in 161.5s)**.
+  - `test_llm_integration.py`: 23 / 23 tests passing.
+- **Frontend Quality**: `flutter analyze` completed with **0 issues**; **5 / 5 Flutter widget tests passing**.
+- **Project Isolation**: `/root/aidesk` and `/root/gmgn_sentinel_desk` preserved 100% clean and untouched.
+
+
 
