@@ -68,6 +68,15 @@ class Settings(BaseModel):
     DEXSCREENER_BASE_URL: str = os.getenv("DEXSCREENER_BASE_URL", "https://api.dexscreener.com")
     DEXSCREENER_CACHE_TTL_SEC: float = float(os.getenv("DEXSCREENER_CACHE_TTL_SEC", "15.0"))
     
+    # GMGN Market Data Provider (Optional, disabled by default pending API Key)
+    GMGN_ENABLED: bool = os.getenv("GMGN_ENABLED", "false").lower() in ("true", "1", "yes")
+    GMGN_API_BASE_URL: str = os.getenv("GMGN_API_BASE_URL", "https://openapi.gmgn.ai").rstrip("/")
+    GMGN_API_KEY: str = os.getenv("GMGN_API_KEY", "")
+    GMGN_KEYPAIR_PATH: str = os.getenv("GMGN_KEYPAIR_PATH", "/root/.config/gmgn/keypair.pem")
+    GMGN_TIMEOUT_SECONDS: float = float(os.getenv("GMGN_TIMEOUT_SECONDS", "10.0"))
+    GMGN_MAX_RETRIES: int = int(os.getenv("GMGN_MAX_RETRIES", "2"))
+    GMGN_CACHE_TTL_SEC: float = float(os.getenv("GMGN_CACHE_TTL_SEC", "15.0"))
+    
     # Database
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "/root/solana_predator/solana_predator.db")
     

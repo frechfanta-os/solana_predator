@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class MarketSource(str, Enum):
     SOLANA_RPC = "SOLANA_RPC"
     DEX_SCREENER = "DEX_SCREENER"
+    GMGN = "GMGN"
     REPLAY = "REPLAY"
     SYNTHETIC = "SYNTHETIC"
 
@@ -18,6 +19,7 @@ class EventQuality(str, Enum):
     DEGRADED = "DEGRADED"
     STALE = "STALE"
     UNVERIFIED = "UNVERIFIED"
+    MISSING = "MISSING"
 
 
 class NormalizedMarketEvent(BaseModel):
@@ -38,6 +40,11 @@ class NormalizedMarketEvent(BaseModel):
     volume_24h_usd: Optional[float] = None
     liquidity_usd: Optional[float] = None
     
+    # Observation status: GENUINELY_OBSERVED, STALE, or MISSING
+    observation_state: str = "GENUINELY_OBSERVED"
+    missing_fields: list[str] = Field(default_factory=list)
+    provider_latency_ms: float = 0.0
+
     # Identifiers & Hashes
     signature: Optional[str] = None
     raw_payload_hash: Optional[str] = None

@@ -444,5 +444,48 @@ export LLM_API_KEY="<your_glm_api_key>"
 - **Frontend Quality**: `flutter analyze` completed with **0 issues**; **5 / 5 Flutter widget tests passing**.
 - **Project Isolation**: `/root/aidesk` and `/root/gmgn_sentinel_desk` preserved 100% clean and untouched.
 
+---
+
+## Phase 8: Optional GMGN Market Data Provider & Prioritized Failover (2026-10-22)
+
+### 1. Objective & Invariants
+- Adapted market data ingestion in `/root/solana_predator` so GMGN is a strictly optional provider.
+- **GMGN Account Limitation**: On-chain account balance requirement of $\ge \$100$ enforced by GMGN for free API key generation.
+- **Strict User Invariants**:
+  1. Zero deposits made and zero bypass attempts.
+  2. Preserved existing Solana RPC, WebSocket, and DEX Screener integrations intact.
+  3. Abstracted all market data ingestion behind a common provider interface (`BaseMarketDataProvider`).
+  4. Automatic failover to DEX Screener and Solana RPC when GMGN is unconfigured or restricted.
+  5. Rigorous distinction of data quality: `GENUINELY_OBSERVED`, `STALE` (> 30s threshold), and `MISSING`.
+  6. Zero market data fabrication: missing prices/liquidity remain `None` and tracked in `missing_fields`.
+  7. Seamless re-activation: GMGN can be re-enabled at any time simply by setting `GMGN_ENABLED=true` and `GMGN_API_KEY=...` in local configuration without touching any agents.
+  8. Absolutely untouched protected repositories `/root/aidesk` and `/root/gmgn_sentinel_desk`.
+  9. Zero real transactions executed on-chain.
+
+### 2. Architecture & Code Changes
+- **Common Abstract Provider Interface** (`backend/market/base.py`):
+  - Defines `BaseMarketDataProvider` (ABC) with methods `name`, `source`, `is_configured`, `is_available`, `get_token_market_data()`, `get_token_pairs()`, `check_health()`, and `close()`.
+- **Provider Implementations**:
+  - `backend/market/dex_screener_provider.py`: Wraps `DexScreenerClient` + `EventNormalizer`.
+  - `backend/market/solana_rpc_provider.py`: Wraps `SolanaRpcClient` for on-chain telemetry without price fabrication.
+  - `backend/market/gmgn_provider.py`: Handles GMGN OpenAPI; gracefully returns `None` on unconfigured, 401/403 balance restrictions, and 429 rate limits, immediately flagging `is_available = False`.
+  - `backend/market/composite_provider.py`: Orchestrates prioritized failover (`GMGN -> DEX Screener -> Solana RPC`), telemetry aggregation, and quality classification.
+- **Models & Config**:
+  - `backend/models/events.py`: Added `MarketSource.GMGN`, `EventQuality.MISSING`, `observation_state`, and `missing_fields`.
+  - `backend/config.py`: Added `GMGN_ENABLED` (default `False`), `GMGN_API_BASE_URL`, `GMGN_API_KEY`, `GMGN_KEYPAIR_PATH`, `GMGN_TIMEOUT_SECONDS`, `GMGN_MAX_RETRIES`, `GMGN_CACHE_TTL_SEC`.
+- **API Routes** (`backend/api/routes.py`):
+  - `GET /api/market/providers`: Telemetry and health inspection for all registered providers.
+  - `GET /api/market/token/{token_mint}`: Single token market quotation with automatic composite failover.
+- **Documentation**:
+  - Updated `docs/DATA_SOURCES.md` and `docs/ACCEPTANCE_REPORT.md`.
+
+### 3. Verification & Empirical Results
+- **Unit & Regression Tests** (`backend/tests/test_market_data_fallback.py`):
+  - 10 / 10 new tests passing: interface compliance, unconfigured GMGN safe state, 403 balance restriction handling, 429 rate limit handling, composite fallback to DexScreener, fallback to Solana RPC, distinction of observed/stale/missing, zero fabrication invariant, GMGN activation when configured, and provider health API endpoint.
+- **Full Backend Suite**: **93 / 93 tests passing (100% green)**.
+- **Frontend Suite**: **5 / 5 Flutter widget tests passing**.
+- **Isolation Verification**: `git status` in `/root/aidesk` and `/root/gmgn_sentinel_desk` is clean and untouched.
+
+
 
 

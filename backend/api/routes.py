@@ -33,6 +33,15 @@ live_order_manager_instance: Optional[Any] = None
 wallet_service_instance: Optional[Any] = None
 risk_guard_instance: Optional[Any] = None
 llm_client_instance: Optional[Any] = None
+market_provider_instance: Optional[Any] = None
+
+
+def get_market_provider() -> Any:
+    global market_provider_instance
+    if not market_provider_instance:
+        from backend.market.composite_provider import CompositeMarketDataProvider
+        market_provider_instance = CompositeMarketDataProvider()
+    return market_provider_instance
 
 
 def get_llm_client() -> Any:
@@ -502,6 +511,31 @@ async def get_risk_audit_log(
         return out
     finally:
         conn.close()
+
+
+# --- Market Data Provider Routes (Composite / GMGN / DEX Screener / Solana RPC) ---
+
+@router.get("/market/providers", response_model=Dict[str, Any])
+async def get_market_providers_health(
+    provider: Any = Depends(get_market_provider),
+):
+    """Retrieve operational status, configuration, and health of all market data providers."""
+    return await provider.check_health()
+
+
+@router.get("/market/token/{token_mint}", response_model=Dict[str, Any])
+async def get_token_market_data_endpoint(
+    token_mint: str,
+    provider: Any = Depends(get_market_provider),
+):
+    """Fetch normalized market metrics for a token mint with automatic provider failover."""
+    event = await provider.get_token_market_data(token_mint)
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Token market data unavailable from all active providers for mint: {token_mint}"
+        )
+    return event.model_dump()
 
 
 # --- LLM Provider Routes (GLM-5.3-Flash / OpenAI Compatible) ---

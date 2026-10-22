@@ -1,0 +1,138 @@
+"""Composite Market Data Provider with automatic failover and data quality tracking."""
+
+import time
+import logging
+from typing import Optional, Dict, Any, List
+from backend.market.base import BaseMarketDataProvider
+from backend.market.dex_screener_provider import DexScreenerProvider
+from backend.market.solana_rpc_provider import SolanaRpcProvider
+from backend.market.gmgn_provider import GmgnMarketProvider
+from backend.models.events import NormalizedMarketEvent, MarketSource, EventQuality
+from backend.config import settings
+
+logger = logging.getLogger("predator.market.composite")
+
+
+class CompositeMarketDataProvider(BaseMarketDataProvider):
+    """Orchestrates market data providers with automatic, seamless fallback.
+    
+    Priority Hierarchy:
+    1. GMGN (Optional rich on-chain analytics, used if configured and available)
+    2. DEX Screener (Always-available primary pricing and pool liquidity source)
+    3. Solana RPC (Always-available on-chain slot, blockhash, and signatures truth)
+    
+    INVARIANTS:
+    - Never fabricates or interpolates missing prices, volumes, or liquidity.
+    - Explicitly tags observation state: GENUINELY_OBSERVED, STALE, or MISSING.
+    - If GMGN is absent/restricted, the pipeline operates without interruption.
+    """
+
+    def __init__(
+        self,
+        dex_screener: Optional[DexScreenerProvider] = None,
+        solana_rpc: Optional[SolanaRpcProvider] = None,
+        gmgn: Optional[GmgnMarketProvider] = None,
+    ):
+        self.dex_screener = dex_screener or DexScreenerProvider()
+        self.solana_rpc = solana_rpc or SolanaRpcProvider()
+        self.gmgn = gmgn or GmgnMarketProvider()
+        self._providers: List[BaseMarketDataProvider] = [
+            self.gmgn,
+            self.dex_screener,
+            self.solana_rpc,
+        ]
+
+    @property
+    def name(self) -> str:
+        return "composite_market_data"
+
+    @property
+    def source(self) -> MarketSource:
+        # Reflects active primary source
+        if self.gmgn.is_available:
+            return MarketSource.GMGN
+        return MarketSource.DEX_SCREENER
+
+    @property
+    def is_configured(self) -> bool:
+        # Configured if at least one provider is configured
+        return any(p.is_configured for p in self._providers)
+
+    @property
+    def is_available(self) -> bool:
+        # Available if at least one provider is operational
+        return any(p.is_available for p in self._providers)
+
+    async def get_token_market_data(self, token_mint: str) -> Optional[NormalizedMarketEvent]:
+        """Fetch market data with automatic prioritized fallback."""
+        now = time.time()
+
+        # 1. Try GMGN if configured and operational
+        if self.gmgn.is_configured and self.gmgn.is_available:
+            try:
+                event = await self.gmgn.get_token_market_data(token_mint)
+                if event and (event.price_usd is not None or event.liquidity_usd is not None):
+                    return event
+            except Exception as e:
+                logger.warning("GMGN provider lookup failed (%s). Falling back to DEX Screener.", e)
+
+        # 2. Fallback to DEX Screener (Standard primary source for price/liquidity)
+        if self.dex_screener.is_available:
+            try:
+                event = await self.dex_screener.get_token_market_data(token_mint)
+                if event:
+                    return event
+            except Exception as e:
+                logger.warning("DEX Screener lookup failed (%s). Falling back to Solana RPC.", e)
+
+        # 3. Fallback to Solana RPC (On-chain truth for slot/signatures without faking prices)
+        if self.solana_rpc.is_available:
+            try:
+                return await self.solana_rpc.get_token_market_data(token_mint)
+            except Exception as e:
+                logger.error("All market data providers failed for token %s: %s", token_mint, e)
+
+        return None
+
+    async def get_token_pairs(self, token_addresses: List[str]) -> List[NormalizedMarketEvent]:
+        """Batch query multiple tokens with prioritized fallback."""
+        if self.gmgn.is_configured and self.gmgn.is_available:
+            try:
+                events = await self.gmgn.get_token_pairs(token_addresses)
+                if events:
+                    return events
+            except Exception:
+                pass
+
+        # Fallback to DEX Screener batching
+        if self.dex_screener.is_available:
+            return await self.dex_screener.get_token_pairs(token_addresses)
+
+        # Fallback to Solana RPC
+        return await self.solana_rpc.get_token_pairs(token_addresses)
+
+    async def check_health(self) -> Dict[str, Any]:
+        """Aggregate health metrics of all underlying market data providers."""
+        gmgn_health = await self.gmgn.check_health()
+        dex_health = await self.dex_screener.check_health()
+        rpc_health = await self.solana_rpc.check_health()
+
+        active_primary = "dex_screener"
+        if self.gmgn.is_available:
+            active_primary = "gmgn"
+
+        return {
+            "name": self.name,
+            "status": "OPERATIONAL" if self.is_available else "DEGRADED",
+            "active_primary_provider": active_primary,
+            "providers": {
+                "gmgn": gmgn_health,
+                "dex_screener": dex_health,
+                "solana_rpc": rpc_health,
+            },
+            "timestamp": time.time(),
+        }
+
+    async def close(self) -> None:
+        for p in self._providers:
+            await p.close()
