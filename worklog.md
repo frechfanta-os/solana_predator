@@ -369,3 +369,45 @@
   - `flutter test`: **5 / 5 widget tests passed** (ran in 3.5s).
 - **Zero Real Transactions Invariant**: Verified that no agent, test, or LLM advisory can autonomously sign or broadcast on-chain Solana transactions.
 
+---
+
+## Phase 6: Final Diagnostic of Remote GLM Provider & Network Telemetry (2026-10-22)
+
+### 1. Audit of Commit 6405d3a & Configuration
+- Commit `6405d3a` confirmed as HEAD on `main`.
+- Working tree in `/root/solana_predator` confirmed clean.
+- Protected repositories `/root/aidesk` and `/root/gmgn_sentinel_desk` preserved 100% clean and untouched.
+- Environment configuration status checked:
+  - `LLM_ENABLED`: `False` (defaults to False pending user key provision).
+  - `LLM_API_BASE_URL`: `https://preview-chat-5b88a64e-2cfd-4430-8a11-8a8190f3f6b2.space-z.ai/api/provider/v1` (configured).
+  - `LLM_MODEL`: `glm-5.3-flash` (configured).
+  - `LLM_API_KEY`: Absent from environment.
+  - `LLM_AUTH_HEADER_STYLE`: `bearer` (configured, supports both Bearer and X-Api-Key).
+
+### 2. Deep Network Diagnostic & Remote Endpoint Verification
+- **DNS Resolution**: Host `preview-chat-5b88a64e-2cfd-4430-8a11-8a8190f3f6b2.space-z.ai` resolved to `['47.239.134.228', '47.83.197.91', '47.239.88.7']` in 444.95ms.
+- **TLS Handshake**: TLSv1.2 established with cipher `ECDHE-RSA-AES128-GCM-SHA256` in 992.49ms.
+- **Model Discovery Probe (`GET /api/provider/v1/models`)**:
+  - Returned `HTTP 200 OK` in 1,210ms: `{"object":"list","data":[{"id":"glm-5.3-flash","object":"model","created":1792702228,"owned_by":"zai"}]}`.
+  - Empirically confirms that the endpoint URL is 100% exact and the supported model ID is unambiguously `glm-5.3-flash`.
+- **Chat Completion Probe (`POST /api/provider/v1/chat/completions`)**:
+  - Without key or with dummy key: Returned `HTTP 401 Unauthorized` in 2,050ms with body:
+    `{"error":{"message":"Missing or invalid API key. Send your key using either 'Authorization: Bearer <key>' or 'X-Api-Key: <key>'.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}`.
+  - Explains the earlier 502: The edge proxy experienced a transient upstream outage (`upstream_unreachable`), which is now resolved. The server is fully operational and waiting for a valid key.
+- **Classification of Diagnostics**:
+  - **Configuration valide**: Architecture, Base URL, et modèle configurés correctement.
+  - **Connexion réseau vérifiée**: DNS, TLS, et endpoint `/models` (HTTP 200) confirmés.
+  - **Authentification vérifiée**: Format Bearer et X-Api-Key validés par la réponse du serveur distant.
+  - **Complétion réelle réussie**: Non effectuée (clé API absente de l'environnement).
+  - **Tests simulés**: 22 / 22 tests unitaires validés (100% passants).
+  - **Blocages externes**: Bloqué par l'absence d'une clé API valide en local.
+
+### 3. Local Activation Instructions
+To supply the API key locally in the environment without committing secrets:
+```bash
+export LLM_ENABLED=true
+export LLM_API_KEY="<your_glm_api_key>"
+# Or create an untracked .env file in /root/solana_predator
+```
+
+

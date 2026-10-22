@@ -12,22 +12,19 @@ All four primary architectural pillars have been fully engineered, validated by 
 
 ---
 
-## 2. Acceptance Criteria Verification Matrix
+## 2. Acceptance Criteria Verification Matrix & LLM Diagnostic
 
-| Criterion | Phase 4 & 5 Specification | Verified Empirical Evidence | Classification & Status |
+| Dimension | Spécification & Preuve Empirique | Catégorie Requise | Statut |
 |---|---|---|---|
-| **Absolute Project Isolation** | Zero operations or modifications affecting `/root/aidesk` or `/root/gmgn_sentinel_desk`. | Git status clean on both protected repositories. All changes isolated in `/root/solana_predator`. | **Vérifié par test automatisé** — ACCEPTED |
-| **Commit Audit & Secret Scanning** | Verify commit `792d90c`, clean tree, zero hardcoded API keys or private keys in Git. | Commit `792d90c` confirmed. Regex scans show zero leaked credentials. | **Vérifié par test automatisé** — ACCEPTED |
-| **Real Provider Connectivity Probe** | Probe configured base URL (`space-z.ai`) with `glm-5.3-flash`. Measure HTTP status & latency. | Real endpoint probe returned HTTP 502 `upstream_unreachable`. Backoff retries executed. No local API key configured. | **Vérifié avec le fournisseur réel** — BLOQUÉ (Upstream Unreachable / Clef absente) |
-| **LLM Degraded / Fallback Mode** | Terminal & multi-agent pipeline function deterministically when LLM is unavailable or unconfigured. | Verified via `test_llm_analyze_endpoint_all_states` and `test_fallback_mode_when_disabled`. | **Vérifié par test automatisé** — ACCEPTED |
-| **SKEPTIC Contradiction of LLM** | SKEPTIC agent contradicts bullish LLM advisory based on verifiable facts (0 sells / honeypot). | Verified in `test_skeptic_contradicts_llm_advisory`. SKEPTIC VETO overrides LLM buy recommendation. | **Vérifié par test automatisé** — ACCEPTED |
-| **RISK Inviolable Veto Priority** | RISK veto remains absolute over any LLM output or agent vote without exception. | Verified in `test_llm_cannot_override_risk_veto`. Final decision forced to VETO. | **Vérifié par test automatisé** — ACCEPTED |
-| **Prompt Version & Decision Tracking** | Agents record prompt template version (`v1.0-chief-synthesis`) and decisions in SQLite. | Verified in `test_prompt_version_and_advisory_persistence`. Saved to `chief_decisions.details_json`. | **Vérifié par test automatisé** — ACCEPTED |
-| **API Endpoints (5 States)** | `GET /api/llm/status` & `POST /api/llm/analyze` distinguishing configured vs available & 5 error states. | Verified in `test_client_connectivity_probe` & `test_llm_analyze_endpoint_all_states`. | **Vérifié par test automatisé** — ACCEPTED |
-| **Mock vs Real Distinction** | Explicit separation between mock simulated responses and real network calls. | Mock tests isolated in Pytest with synthetic fixtures; live probe explicitly logged upstream 502. | **Vérifié par simulation** (Tests) / **Vérifié avec le fournisseur réel** (Probe) |
-| **Zero Live Transaction Invariant** | No agent, test, or LLM can autonomously sign or broadcast on-chain Solana transactions. | Hardcoded safety flags (`ALLOW_TRANSACTION_SIGNING=False`) and negative tests verified. | **Vérifié par test automatisé** — ACCEPTED |
-| **Backend Test Suite (82 tests)** | Complete test suite green without weakening assertions. | **82 / 82 Pytest tests passing cleanly in 17.50s**. | **Vérifié par test automatisé** — ACCEPTED |
-| **Frontend Terminal Quality** | Terminal views, learning metrics, live wallet connection UI, zero analyzer issues. | `flutter analyze` **0 issues**. **5 / 5 widget tests passing**. | **Vérifié par test automatisé** — ACCEPTED |
+| **Configuration Architecture & Variables** | `LLM_API_BASE_URL` configurée (`https://preview-chat-5b88a64e-2cfd-4430-8a11-8a8190f3f6b2.space-z.ai/api/provider/v1`), modèle `glm-5.3-flash`, format auth `bearer` ou `x-api-key`. Zéro clé en dur. | **Configuration valide** | ACCEPTED |
+| **Résolution DNS & Handshake TLS** | DNS résolu vers `47.239.134.228`, `47.83.197.91`, `47.239.88.7` (444ms). Handshake TLSv1.2 (992ms). Endpoint `GET /api/provider/v1/models` répond HTTP 200 listant `glm-5.3-flash`. | **Connexion réseau vérifiée** | ACCEPTED |
+| **Validation Format Authentification** | Le serveur distant confirme explicitement le format attendu : `Authorization: Bearer <key>` ou `X-Api-Key: <key>`. Renvoie HTTP 401 si clé absente ou invalide. | **Authentification vérifiée** | ACCEPTED (Format conforme) |
+| **Tests Unitaires & Mocks Complets** | 22 tests unitaires LLM couvrant 401, 429, 500, time-outs, concurrence, contradiction SKEPTIC, et les 5 états de l'API REST. | **Tests simulés** | ACCEPTED (22/22 passés) |
+| **Disponibilité Réseau Externe** | L'edge proxy a renvoyé temporairement `HTTP 502 Bad Gateway` (`upstream_unreachable`), résolu ensuite en `HTTP 401 Unauthorized` (`invalid_api_key`). En attente de clé API locale valide. | **Blocages externes** | BLOQUÉ (Clé API non fournie localement) |
+| **Complétion Réelle en Production** | Aucun appel de complétion avec une clé réelle valide n'a encore été exécuté. Ne sera validé qu'après configuration d'une clé API valide en environnement local. | **Complétion réelle réussie** | NON EFFECTUÉ (Clé absente) |
+| **Absolue Isolation & Sécurité** | `/root/aidesk` et `/root/gmgn_sentinel_desk` 100% propres et intacts. Zéro clé privée, aucune transaction on-chain permise ou diffusée. | **Sécurité & Isolation** | ACCEPTED |
+| **Suite Globale Backend (82 tests)** | 82 / 82 tests Pytest validés avec succès sans affaiblissement d'assertions. | **Tests automatisés** | ACCEPTED (100% green) |
+| **Frontend Flutter Terminal** | `flutter analyze` 0 issue, 5 / 5 tests de widgets réussis. | **Tests automatisés** | ACCEPTED (100% green) |
 
 ---
 
