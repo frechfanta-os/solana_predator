@@ -514,9 +514,15 @@ class LLMAnalysisRequest(BaseModel):
 
 @router.get("/llm/status", response_model=Dict[str, Any])
 async def get_llm_status(
+    probe: bool = Query(default=False, description="Whether to execute active connectivity probe"),
     llm: Any = Depends(get_llm_client),
 ):
-    """Retrieve operational status, active model, and error telemetry of the LLM provider."""
+    """Retrieve operational status, active model, and error telemetry of the LLM provider.
+    
+    Exposes separately configuration state and active connectivity probe result.
+    """
+    if probe:
+        await llm.check_connectivity()
     return llm.get_status()
 
 
@@ -525,13 +531,15 @@ async def trigger_llm_analysis(
     req: LLMAnalysisRequest,
     llm: Any = Depends(get_llm_client),
 ):
-    """Request ad-hoc qualitative multi-agent analysis for a token via LLM."""
-    if not llm.enabled or not llm.api_key:
-        return {
-            "status": "LLM_NOT_CONFIGURED",
-            "message": "LLM is disabled or missing credentials. Operating in deterministic fallback mode.",
-            "advisory": None,
-        }
+    """Request ad-hoc qualitative multi-agent analysis for a token via LLM.
+    
+    Faithfully distinguishes between:
+    - SUCCESS
+    - LLM_NOT_CONFIGURED
+    - LLM_AUTH_FAILED
+    - LLM_UNAVAILABLE
+    - LLM_INVALID_RESPONSE
+    """
     from backend.llm.prompt_templates import (
         CHIEF_SYNTHESIS_SYSTEM_PROMPT,
         SKEPTIC_SYSTEM_PROMPT,
@@ -541,32 +549,27 @@ async def trigger_llm_analysis(
         format_agent_user_prompt,
     )
     prompt_map = {
-        "CHIEF": CHIEF_SYNTHESIS_SYSTEM_PROMPT,
-        "SKEPTIC": SKEPTIC_SYSTEM_PROMPT,
-        "WHALE": WHALE_SYSTEM_PROMPT,
-        "VET": VET_SYSTEM_PROMPT,
-        "QUANT": QUANT_SYSTEM_PROMPT,
+        "CHIEF": (CHIEF_SYNTHESIS_SYSTEM_PROMPT, "v1.0-chief-synthesis"),
+        "SKEPTIC": (SKEPTIC_SYSTEM_PROMPT, "v1.0-skeptic-contrarian"),
+        "WHALE": (WHALE_SYSTEM_PROMPT, "v1.0-whale-flow"),
+        "VET": (VET_SYSTEM_PROMPT, "v1.0-vet-contract-security"),
+        "QUANT": (QUANT_SYSTEM_PROMPT, "v1.0-quant-momentum"),
     }
-    sys_prompt = prompt_map.get(req.agent_role.upper(), CHIEF_SYNTHESIS_SYSTEM_PROMPT)
+    sys_prompt, prompt_ver = prompt_map.get(
+        req.agent_role.upper(),
+        (CHIEF_SYNTHESIS_SYSTEM_PROMPT, "v1.0-chief-synthesis")
+    )
     user_prompt = format_agent_user_prompt(
         token_mint=req.token_mint,
         event_data={"token_mint": req.token_mint},
         context=req.context or {},
         contributing_agent_signals={},
     )
-    advisory = await llm.query_structured_advisory(
+    result = await llm.request_advisory(
         agent_name=req.agent_role.upper(),
         token_mint=req.token_mint,
         system_prompt=sys_prompt,
         user_prompt=user_prompt,
+        prompt_version=prompt_ver,
     )
-    if not advisory:
-        return {
-            "status": "LLM_FALLBACK",
-            "message": "LLM query failed or timed out. Deterministic fallback engaged.",
-            "advisory": None,
-        }
-    return {
-        "status": "SUCCESS",
-        "advisory": advisory.model_dump(),
-    }
+    return result.model_dump()

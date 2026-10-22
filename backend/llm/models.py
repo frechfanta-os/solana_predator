@@ -58,8 +58,21 @@ class AgentLLMAdvisory(BaseModel):
     invalidation_conditions: List[str] = Field(default_factory=list, description="Conditions that falsify this thesis")
     summary: str = Field(..., description="Concise qualitative synthesis rationale")
     strategy_version: str = Field(default="v1.2.0-llm-glm5", description="Strategy/prompt revision")
+    prompt_version: str = Field(default="v1.0-chief-synthesis", description="Prompt template version identifier")
     created_at: float = Field(default_factory=time.time)
     latency_ms: float = 0.0
     provider: str = "space_z"
     model: str = "glm-5.3-flash"
     raw_tokens_used: int = 0
+
+
+class LLMAdvisoryResult(BaseModel):
+    """Enriched result for LLM advisory requests encapsulating operational status."""
+    status: str = Field(
+        ...,
+        description="Outcome status: SUCCESS, LLM_NOT_CONFIGURED, LLM_AUTH_FAILED, LLM_UNAVAILABLE, LLM_INVALID_RESPONSE"
+    )
+    message: str
+    advisory: Optional[AgentLLMAdvisory] = None
+    http_status: Optional[int] = None
+    latency_ms: Optional[float] = None

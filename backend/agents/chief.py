@@ -65,6 +65,13 @@ class ChiefAgent(BaseAgent):
         data_ts = event.source_timestamp or event.local_receive_timestamp
         sources = [event.source.value]
 
+        advisory_dict = (
+            llm_advisory.model_dump()
+            if hasattr(llm_advisory, "model_dump")
+            else (dict(llm_advisory) if llm_advisory else None)
+        )
+        advisory_prompt_ver = getattr(llm_advisory, "prompt_version", None) if llm_advisory else None
+
         # 1. Absolute Inviolable Veto: RISK
         if risk_res and risk_res.decision == AgentDecision.VETO:
             reason = f"VETOED BY RISK: {', '.join(risk_res.reason_codes)}"
@@ -93,6 +100,8 @@ class ChiefAgent(BaseAgent):
                 expected_outcome="ABSOLUTE_CAPITAL_PRESERVATION",
                 evaluation_horizon_sec=900,
                 entry_price_usd=event.price_usd,
+                llm_advisory=advisory_dict,
+                prompt_version=advisory_prompt_ver,
             )
 
         # 2. Safety Veto: VET
@@ -121,6 +130,8 @@ class ChiefAgent(BaseAgent):
                 expected_outcome="AVOID_MALICIOUS_OR_UNSAFE_CONTRACT",
                 evaluation_horizon_sec=900,
                 entry_price_usd=event.price_usd,
+                llm_advisory=advisory_dict,
+                prompt_version=advisory_prompt_ver,
             )
 
         # 3. Contrarian Veto: SKEPTIC
@@ -149,6 +160,8 @@ class ChiefAgent(BaseAgent):
                 expected_outcome="AVOID_HONEYPOT_OR_WASH_PUMP",
                 evaluation_horizon_sec=900,
                 entry_price_usd=event.price_usd,
+                llm_advisory=advisory_dict,
+                prompt_version=advisory_prompt_ver,
             )
 
         # 4. Check Exit Signal (e.g. Whale outflow)
@@ -177,6 +190,8 @@ class ChiefAgent(BaseAgent):
                 expected_outcome="POSITION_EXIT_CAPITAL_PRESERVATION",
                 evaluation_horizon_sec=900,
                 entry_price_usd=event.price_usd,
+                llm_advisory=advisory_dict,
+                prompt_version=advisory_prompt_ver,
             )
 
         # 5. Opportunity Consensus Evaluation
@@ -288,4 +303,6 @@ class ChiefAgent(BaseAgent):
             target_price_usd=target_px,
             invalidation_price_usd=inval_px,
             entry_price_usd=current_px,
+            llm_advisory=advisory_dict,
+            prompt_version=advisory_prompt_ver,
         )

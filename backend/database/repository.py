@@ -634,6 +634,8 @@ class Repository:
                             json.dumps({
                                 "risk_veto_reasons": consensus.risk_veto_reasons,
                                 "contributing_agents_count": len(consensus.contributing_agents),
+                                "prompt_version": consensus.prompt_version,
+                                "llm_advisory": consensus.llm_advisory,
                             }),
                         ))
                 finally:

@@ -85,3 +85,5 @@ class ChiefConsensusRecord(BaseModel):
     invalidation_price_usd: Optional[float] = None
     entry_price_usd: Optional[float] = None
     risk_veto_reasons: List[str] = Field(default_factory=list)
+    llm_advisory: Optional[Dict[str, Any]] = None
+    prompt_version: Optional[str] = None

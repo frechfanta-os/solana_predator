@@ -320,3 +320,52 @@
 - `/root/aidesk`: untouched, clean working tree (`git status` clean).
 - `/root/gmgn_sentinel_desk`: untouched, clean working tree (`git status` clean).
 - Zero secrets committed to git. All modifications strictly isolated in `/root/solana_predator`.
+
+---
+
+## Phase 5: Real Provider Validation & Agent Resilience Audit (2026-10-22)
+
+### 1. Initial Audit of Commit 792d90c & Project Isolation
+- Commit `792d90c6c7d6d46e312d4cfba53355e163a84990` confirmed as HEAD on `main`.
+- Working tree in `/root/solana_predator` confirmed clean prior to audit.
+- Absolute isolation verified: `/root/aidesk` and `/root/gmgn_sentinel_desk` inspected with `git status`; both repositories remain untouched and clean.
+- Secret scan performed (`grep -rnE "(sk-[a-zA-Z0-9_-]{20,})" .`): zero real API keys or private keys committed to Git. Only synthetic dummy keys in negative test fixtures.
+
+### 2. Live Provider Probe (space-z.ai / GLM-5.3-Flash)
+- **Target URL**: `https://preview-chat-5b88a64e-2cfd-4430-8a11-8a8190f3f6b2.space-z.ai/api/provider/v1/chat/completions`
+- **Configured Model**: `glm-5.3-flash`
+- **Execution**: Non-streaming minimal completion probe (`Ping`).
+- **Empirical Result**:
+  - Local configuration: No real `LLM_API_KEY` configured in environment (`Configured: False`).
+  - Remote edge proxy response: Initial timeout, followed by `HTTP 502 Bad Gateway` (`{"error":{"message":"Provider service unreachable. fetch failed","type":"api_error","param":null,"code":"upstream_unreachable"}}`).
+  - Client behavior: Exponential backoff retries triggered on 502 (attempts at 0.84s, 1.80s, 4.33s), properly terminating with `LLMServerError(status_code=502)`.
+  - **Classification**: **Bloqué** (Fournisseur distant inaccessible en amont / Clef locale non configurée).
+  - No secrets or authorization tokens displayed or leaked in logs.
+
+### 3. Architectural Enhancements & Refinements
+1. **Separation of Configuration State and Active Availability**:
+   - Enhanced `LLMClient.get_status()` to explicitly provide `configuration_state` (`CONFIGURED` vs `NOT_CONFIGURED`) and `availability_state` (`AVAILABLE`, `UNAVAILABLE`, `NOT_CONFIGURED`, `STANDBY`, `DISABLED`).
+   - Added `LLMClient.check_connectivity()` to perform an active, non-leaking probe on demand.
+   - Updated `GET /api/llm/status?probe=true` to allow triggering live connectivity checks independently.
+2. **5 Explicit API Outcome States**:
+   - Added `LLMAdvisoryResult` Pydantic model.
+   - Updated `POST /api/llm/analyze` to return:
+     - `SUCCESS` (usable structured advisory)
+     - `LLM_NOT_CONFIGURED` (unconfigured or disabled)
+     - `LLM_AUTH_FAILED` (401/403 rejected authentication)
+     - `LLM_UNAVAILABLE` (502/503/timeout/connection error)
+     - `LLM_INVALID_RESPONSE` (malformed JSON from LLM)
+3. **Agent Resilience & Contrarian SKEPTIC**:
+   - Verified `SkepticAgent` contradicts bullish LLM advisories when verifiable market anomalies (e.g. 25 buys, 0 sells) indicate honeypots.
+   - Preserved absolute `RISK` veto priority over all LLM advisory signals.
+   - Attached `llm_advisory` and `prompt_version` (`v1.0-chief-synthesis`) to `ChiefConsensusRecord` and persisted into SQLite `chief_decisions.details_json`.
+
+### 4. Empirical Test Suite & Verification Results
+- **Pytest Suite (`backend/tests/`)**:
+  - Expanded `backend/tests/test_llm_integration.py` to **22 unit tests** (+4 tests covering SKEPTIC contradiction, connectivity probe, all 5 endpoint states, prompt version persistence).
+  - Executed full test suite: **82 / 82 tests passed (100% green in 17.50s)**.
+- **Flutter Frontend Quality**:
+  - `flutter analyze`: **0 issues found** (ran in 19.8s).
+  - `flutter test`: **5 / 5 widget tests passed** (ran in 3.5s).
+- **Zero Real Transactions Invariant**: Verified that no agent, test, or LLM advisory can autonomously sign or broadcast on-chain Solana transactions.
+

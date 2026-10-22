@@ -504,3 +504,206 @@ def test_client_status_telemetry():
     assert status["model"] == "glm-5.3-flash"
     assert status["api_key_configured"] is True
     assert "sk-secret-key-do-not-leak" not in str(status)  # Key is never exposed in telemetry
+
+
+# 19. SKEPTIC Contradiction of LLM Bullish Advisory
+@pytest.mark.asyncio
+async def test_skeptic_contradicts_llm_advisory():
+    from backend.agents.skeptic import SkepticAgent
+    skeptic = SkepticAgent()
+    chief = ChiefAgent()
+
+    # Event exhibiting 25 buys and 0 sells (verifiable honeypot signature)
+    event = NormalizedMarketEvent(
+        event_id="evt_honeypot_1",
+        source=MarketSource.SOLANA_RPC,
+        token_mint="TokenHoneypot11111111111111111111111111111",
+        price_usd=0.05,
+        liquidity_usd=10000.0,
+        volume_24h_usd=25000.0,
+        local_receive_timestamp=1000.0,
+        processing_timestamp=1000.1,
+        metadata={"txns_5m": {"buys": 25, "sells": 0}},
+    )
+
+    skeptic_res = await skeptic.evaluate(event, {})
+    assert skeptic_res.decision == AgentDecision.VETO
+    assert "SKEPTIC_ZERO_SELLS_HONEYPOT_RISK" in skeptic_res.reason_codes
+
+    # Even if LLM is hyper-bullish
+    bullish_llm = AgentLLMAdvisory(
+        agent="CHIEF",
+        token_mint=event.token_mint,
+        decision=AgentDecision.BUY_CANDIDATE,
+        confidence=0.99,
+        evidence=["Extreme buy momentum"],
+        risks=[],
+        invalidation_conditions=[],
+        summary="GLM Flash advises strong buy",
+        strategy_version="glm5-glm-5.3-flash",
+        prompt_version="v1.0-chief-synthesis",
+    )
+
+    consensus = chief.synthesize(
+        event=event,
+        agent_results={AgentName.SKEPTIC.value: skeptic_res},
+        start_time_monotonic=0.0,
+        llm_advisory=bullish_llm,
+    )
+
+    # SKEPTIC veto must override LLM bullish advice!
+    assert consensus.final_decision == AgentDecision.VETO
+    assert "VETOED BY SKEPTIC" in consensus.chief_reason
+
+
+# 20. Active Connectivity Probe (Separate Configuration & Live Check)
+@pytest.mark.asyncio
+async def test_client_connectivity_probe():
+    # A. Unconfigured client
+    unconf_client = LLMClient(api_key="", enabled=False)
+    unconf_check = await unconf_client.check_connectivity()
+    assert unconf_check["connectivity_status"] == "NOT_CONFIGURED"
+    assert unconf_check["available"] is False
+
+    # B. Configured client with 200 OK
+    good_resp = json.dumps({
+        "id": "chatcmpl-probe",
+        "object": "chat.completion",
+        "created": 1234567,
+        "model": "glm-5.3-flash",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "pong"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    })
+    session_mock = MagicMock()
+    session_mock.closed = False
+    session_mock.post.return_value = MockAiohttpResponse(200, good_resp)
+
+    client = LLMClient(api_key="sk-testkey", enabled=True, session=session_mock)
+    probe_ok = await client.check_connectivity()
+    assert probe_ok["connectivity_status"] == "AVAILABLE"
+    assert probe_ok["available"] is True
+    assert probe_ok["http_status"] == 200
+
+    # C. Auth failure (401)
+    session_mock.post.return_value = MockAiohttpResponse(401, '{"error": "Unauthorized"}')
+    client_401 = LLMClient(api_key="sk-badkey", enabled=True, session=session_mock)
+    probe_401 = await client_401.check_connectivity()
+    assert probe_401["connectivity_status"] == "AUTHENTICATION_FAILED"
+    assert probe_401["available"] is False
+    assert probe_401["http_status"] == 401
+
+
+# 21. API Endpoint /api/llm/analyze Statuses
+@pytest.mark.asyncio
+async def test_llm_analyze_endpoint_all_states():
+    from backend.api.routes import trigger_llm_analysis, LLMAnalysisRequest
+
+    # State 1: LLM_NOT_CONFIGURED
+    client_disabled = LLMClient(enabled=False)
+    res1 = await trigger_llm_analysis(
+        LLMAnalysisRequest(token_mint="Token111111111111111111111111111111111111111"),
+        llm=client_disabled,
+    )
+    assert res1["status"] == "LLM_NOT_CONFIGURED"
+
+    # State 2: LLM_AUTH_FAILED (401)
+    session_mock = MagicMock()
+    session_mock.closed = False
+    session_mock.post.return_value = MockAiohttpResponse(401, '{"error": "Invalid API key"}')
+    client_auth = LLMClient(api_key="sk-invalid", enabled=True, session=session_mock)
+    res2 = await trigger_llm_analysis(
+        LLMAnalysisRequest(token_mint="Token111111111111111111111111111111111111111"),
+        llm=client_auth,
+    )
+    assert res2["status"] == "LLM_AUTH_FAILED"
+
+    # State 3: LLM_UNAVAILABLE (502)
+    session_mock.post.return_value = MockAiohttpResponse(502, '{"error": "Bad Gateway"}')
+    client_unavail = LLMClient(api_key="sk-valid", enabled=True, session=session_mock, max_retries=0)
+    res3 = await trigger_llm_analysis(
+        LLMAnalysisRequest(token_mint="Token111111111111111111111111111111111111111"),
+        llm=client_unavail,
+    )
+    assert res3["status"] == "LLM_UNAVAILABLE"
+
+    # State 4: LLM_INVALID_RESPONSE (Malformed JSON)
+    session_mock.post.return_value = MockAiohttpResponse(200, '{"choices": [{"message": {"content": "not json"}}]')
+    client_invalid = LLMClient(api_key="sk-valid", enabled=True, session=session_mock)
+    res4 = await trigger_llm_analysis(
+        LLMAnalysisRequest(token_mint="Token111111111111111111111111111111111111111"),
+        llm=client_invalid,
+    )
+    assert res4["status"] == "LLM_INVALID_RESPONSE"
+
+    # State 5: SUCCESS
+    valid_advisory_json = json.dumps({
+        "decision": "PASS",
+        "confidence": 0.85,
+        "evidence": ["Normal turnover"],
+        "risks": ["Low liquidity"],
+        "invalidation_conditions": ["Liquidity spike"],
+        "summary": "Observation phase recommended",
+    })
+    valid_resp = json.dumps({
+        "id": "chatcmpl-ok",
+        "object": "chat.completion",
+        "created": 1234567,
+        "model": "glm-5.3-flash",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": valid_advisory_json}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+    })
+    session_mock.post.return_value = MockAiohttpResponse(200, valid_resp)
+    client_ok = LLMClient(api_key="sk-valid", enabled=True, session=session_mock)
+    res5 = await trigger_llm_analysis(
+        LLMAnalysisRequest(token_mint="Token111111111111111111111111111111111111111"),
+        llm=client_ok,
+    )
+    assert res5["status"] == "SUCCESS"
+    assert res5["advisory"]["decision"] == AgentDecision.PASS.value
+    assert res5["advisory"]["model"] == "glm-5.3-flash"
+    assert res5["advisory"]["prompt_version"] == "v1.0-chief-synthesis"
+
+
+# 22. Persistence of Prompt Version and Advisory in SQLite Repository
+@pytest.mark.asyncio
+async def test_prompt_version_and_advisory_persistence(repo):
+    chief = ChiefAgent()
+    event = NormalizedMarketEvent(
+        event_id="evt_persist_1",
+        source=MarketSource.SOLANA_RPC,
+        token_mint="TokenPersist1111111111111111111111111111111",
+        price_usd=0.10,
+        liquidity_usd=50000.0,
+        local_receive_timestamp=1000.0,
+        processing_timestamp=1000.1,
+    )
+    advisory = AgentLLMAdvisory(
+        agent="CHIEF",
+        token_mint=event.token_mint,
+        decision=AgentDecision.PASS,
+        confidence=0.75,
+        evidence=["Steady liquidity depth"],
+        risks=["Macro uncertainty"],
+        invalidation_conditions=["Volume breakout"],
+        summary="Prudent wait-and-see",
+        strategy_version="glm5-glm-5.3-flash",
+        prompt_version="v1.0-chief-synthesis",
+    )
+    consensus = chief.synthesize(
+        event=event,
+        agent_results={},
+        start_time_monotonic=0.0,
+        llm_advisory=advisory,
+    )
+    assert consensus.llm_advisory is not None
+    assert consensus.prompt_version == "v1.0-chief-synthesis"
+
+    # Persist in SQLite
+    await repo.save_chief_decision(consensus)
+
+    # Read back
+    decisions = await repo.get_recent_chief_decisions(limit=5)
+    saved = next(d for d in decisions if d["consensus_id"] == consensus.consensus_id)
+    details = json.loads(saved["details_json"])
+    assert details["prompt_version"] == "v1.0-chief-synthesis"
+    assert details["llm_advisory"]["model"] == "glm-5.3-flash"

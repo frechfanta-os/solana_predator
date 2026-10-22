@@ -15,6 +15,7 @@ from backend.llm.models import (
     ChatCompletionChoice,
     ChatCompletionUsage,
     AgentLLMAdvisory,
+    LLMAdvisoryResult,
 )
 from backend.llm.exceptions import (
     LLMError,
@@ -76,6 +77,7 @@ class LLMClient:
         self.total_latency_ms = 0.0
         self.consecutive_failures = 0
         self.last_error: Optional[str] = None
+        self.last_connectivity_check: Optional[Dict[str, Any]] = None
 
     def get_endpoint_url(self) -> str:
         """Construct standard chat completions endpoint URL."""
@@ -290,10 +292,30 @@ class LLMClient:
     def get_status(self) -> Dict[str, Any]:
         """Return operational telemetry without exposing credentials."""
         avg_lat = round(self.total_latency_ms / max(1, self.call_count), 2)
-        has_key = bool(self.api_key and len(self.api_key) > 5)
-        return {
+        has_key = bool(self.api_key and len(self.api_key.strip()) > 5)
+
+        if not (self.base_url and has_key):
+            config_state = "NOT_CONFIGURED"
+        else:
+            config_state = "CONFIGURED"
+
+        if not self.enabled:
+            avail_state = "DISABLED"
+        elif config_state == "NOT_CONFIGURED":
+            avail_state = "NOT_CONFIGURED"
+        elif self.consecutive_failures > 0:
+            avail_state = "UNAVAILABLE"
+        elif self.call_count > 0:
+            avail_state = "AVAILABLE"
+        else:
+            avail_state = "STANDBY"
+
+        status_data = {
             "enabled": self.enabled,
+            "configuration_state": config_state,
+            "availability_state": avail_state,
             "configured": bool(self.base_url and has_key),
+            "available": avail_state == "AVAILABLE",
             "provider": self.provider_name,
             "model": self.model,
             "base_url": self.base_url,
@@ -307,24 +329,113 @@ class LLMClient:
             "avg_latency_ms": avg_lat,
             "last_error": self.last_error,
         }
+        if self.last_connectivity_check:
+            status_data["last_connectivity_check"] = self.last_connectivity_check
+        return status_data
 
-    async def query_structured_advisory(
+    async def check_connectivity(self) -> Dict[str, Any]:
+        """Probe provider connectivity with a minimal bounded ping.
+        
+        Does NOT expose credentials or leak secrets.
+        Returns explicit status distinguishing NOT_CONFIGURED, AUTHENTICATION_FAILED, UNAVAILABLE, AVAILABLE.
+        """
+        if not self.base_url:
+            res = {
+                "connectivity_status": "NOT_CONFIGURED",
+                "configured": False,
+                "available": False,
+                "message": "Base URL not configured",
+                "timestamp": time.time(),
+            }
+            self.last_connectivity_check = res
+            return res
+
+        if not self.api_key:
+            res = {
+                "connectivity_status": "NOT_CONFIGURED",
+                "configured": False,
+                "available": False,
+                "message": "API key not configured",
+                "timestamp": time.time(),
+            }
+            self.last_connectivity_check = res
+            return res
+
+        start_mono = time.perf_counter()
+        req = ChatCompletionRequest(
+            model=self.model,
+            messages=[ChatMessage(role="user", content="ping")],
+            max_tokens=5,
+        )
+        try:
+            resp = await self.complete(req)
+            latency = (time.perf_counter() - start_mono) * 1000.0
+            res = {
+                "connectivity_status": "AVAILABLE",
+                "configured": True,
+                "available": True,
+                "http_status": 200,
+                "latency_ms": round(latency, 2),
+                "model": resp.model,
+                "timestamp": time.time(),
+            }
+            self.last_connectivity_check = res
+            return res
+        except LLMAuthenticationError as e:
+            res = {
+                "connectivity_status": "AUTHENTICATION_FAILED",
+                "configured": True,
+                "available": False,
+                "http_status": e.status_code or 401,
+                "error": "Authentication refused by provider",
+                "timestamp": time.time(),
+            }
+            self.last_connectivity_check = res
+            return res
+        except (LLMUnavailableError, LLMTimeoutError, LLMServerError) as e:
+            res = {
+                "connectivity_status": "UNAVAILABLE",
+                "configured": True,
+                "available": False,
+                "http_status": getattr(e, "status_code", 503),
+                "error": str(e),
+                "timestamp": time.time(),
+            }
+            self.last_connectivity_check = res
+            return res
+        except Exception as e:
+            res = {
+                "connectivity_status": "ERROR",
+                "configured": True,
+                "available": False,
+                "error": str(e),
+                "timestamp": time.time(),
+            }
+            self.last_connectivity_check = res
+            return res
+
+    async def request_advisory(
         self,
         agent_name: str,
         token_mint: str,
         system_prompt: str,
         user_prompt: str,
-    ) -> Optional[AgentLLMAdvisory]:
-        """Query LLM for qualitative advisory analysis and parse structured output.
-        
-        Returns None gracefully if LLM is disabled or fails, allowing immediate fallback.
-        """
+        prompt_version: str = "v1.0-chief-synthesis",
+    ) -> LLMAdvisoryResult:
+        """Query LLM for qualitative advisory analysis and return typed LLMAdvisoryResult."""
         if not self.enabled:
-            return None
+            return LLMAdvisoryResult(
+                status="LLM_NOT_CONFIGURED",
+                message="LLM provider is disabled. Operating in deterministic fallback mode.",
+                advisory=None,
+            )
 
         if not self.api_key:
-            logger.debug("LLM enabled but API key is missing. Falling back to deterministic logic.")
-            return None
+            return LLMAdvisoryResult(
+                status="LLM_NOT_CONFIGURED",
+                message="LLM API key is missing. Operating in deterministic fallback mode.",
+                advisory=None,
+            )
 
         messages = [
             ChatMessage(role="system", content=system_prompt),
@@ -341,10 +452,14 @@ class LLMClient:
         try:
             resp = await self.complete(req)
             if not resp.choices:
-                return None
+                return LLMAdvisoryResult(
+                    status="LLM_INVALID_RESPONSE",
+                    message="LLM returned response with empty choices array.",
+                    advisory=None,
+                    latency_ms=resp.latency_ms,
+                )
             raw_text = resp.choices[0].message.content.strip()
 
-            # Extract JSON block if wrapped in markdown code fences
             if "```" in raw_text:
                 parts = raw_text.split("```")
                 for part in parts:
@@ -355,9 +470,16 @@ class LLMClient:
                         raw_text = clean
                         break
 
-            parsed_data = json.loads(raw_text)
+            try:
+                parsed_data = json.loads(raw_text)
+            except json.JSONDecodeError as e:
+                return LLMAdvisoryResult(
+                    status="LLM_INVALID_RESPONSE",
+                    message=f"LLM content is not valid JSON: {e}",
+                    advisory=None,
+                    latency_ms=resp.latency_ms,
+                )
 
-            # Map decision string to AgentDecision enum safely
             dec_str = parsed_data.get("decision", "PASS").upper()
             if dec_str in ("BUY", "BUY_CANDIDATE"):
                 enum_dec = AgentDecision.BUY_CANDIDATE
@@ -372,7 +494,7 @@ class LLMClient:
 
             tokens_used = resp.usage.total_tokens if resp.usage else 0
 
-            return AgentLLMAdvisory(
+            advisory = AgentLLMAdvisory(
                 agent=agent_name,
                 token_mint=token_mint,
                 decision=enum_dec,
@@ -382,12 +504,66 @@ class LLMClient:
                 invalidation_conditions=list(parsed_data.get("invalidation_conditions", [])),
                 summary=str(parsed_data.get("summary", "Analysis completed")),
                 strategy_version=f"glm5-{self.model}",
+                prompt_version=prompt_version,
                 created_at=time.time(),
                 latency_ms=resp.latency_ms,
                 provider=self.provider_name,
                 model=self.model,
                 raw_tokens_used=tokens_used,
             )
+            return LLMAdvisoryResult(
+                status="SUCCESS",
+                message="Advisory synthesized successfully",
+                advisory=advisory,
+                http_status=200,
+                latency_ms=resp.latency_ms,
+            )
+
+        except LLMAuthenticationError as e:
+            return LLMAdvisoryResult(
+                status="LLM_AUTH_FAILED",
+                message=f"LLM authentication refused (HTTP {e.status_code})",
+                advisory=None,
+                http_status=e.status_code,
+            )
+        except (LLMUnavailableError, LLMTimeoutError, LLMServerError) as e:
+            return LLMAdvisoryResult(
+                status="LLM_UNAVAILABLE",
+                message=f"LLM provider unavailable: {e}",
+                advisory=None,
+                http_status=getattr(e, "status_code", 503),
+            )
+        except LLMResponseFormatError as e:
+            return LLMAdvisoryResult(
+                status="LLM_INVALID_RESPONSE",
+                message=f"LLM response format error: {e}",
+                advisory=None,
+                http_status=getattr(e, "status_code", 422),
+            )
         except Exception as e:
-            logger.warning("LLM advisory query failed for agent %s (%s). Falling back gracefully.", agent_name, e)
-            return None
+            return LLMAdvisoryResult(
+                status="LLM_UNAVAILABLE",
+                message=f"LLM query unexpected error: {e}",
+                advisory=None,
+            )
+
+    async def query_structured_advisory(
+        self,
+        agent_name: str,
+        token_mint: str,
+        system_prompt: str,
+        user_prompt: str,
+        prompt_version: str = "v1.0-chief-synthesis",
+    ) -> Optional[AgentLLMAdvisory]:
+        """Query LLM for qualitative advisory analysis and parse structured output.
+        
+        Returns None gracefully if LLM is disabled or fails, allowing immediate fallback.
+        """
+        res = await self.request_advisory(
+            agent_name=agent_name,
+            token_mint=token_mint,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            prompt_version=prompt_version,
+        )
+        return res.advisory
