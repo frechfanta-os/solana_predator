@@ -1,0 +1,63 @@
+name: Frontend Flutter CI & Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  analyze_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: |
+          cd frontend
+          flutter pub get
+
+      - name: Analyze Flutter code
+        run: |
+          cd frontend
+          flutter analyze
+
+      - name: Run Flutter tests
+        run: |
+          cd frontend
+          flutter test
+
+      - name: Build Flutter Web
+        run: |
+          cd frontend
+          flutter build web --release
+
+      - name: Upload Web Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: solana-predator-web
+          path: frontend/build/web
+
+      - name: Build Android Release APK
+        run: |
+          cd frontend
+          flutter build apk --release
+
+      - name: Upload Android APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: solana-predator-apk
+          path: frontend/build/app/outputs/flutter-apk/app-release.apk
