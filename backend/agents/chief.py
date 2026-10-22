@@ -45,6 +45,7 @@ class ChiefAgent(BaseAgent):
         event: NormalizedMarketEvent,
         agent_results: Dict[str, AgentResult],
         start_time_monotonic: float,
+        llm_advisory: Optional[Any] = None,
     ) -> ChiefConsensusRecord:
         """Synthesize all agent results into a binding consensus record."""
         consensus_id = f"chief_{uuid.uuid4().hex[:12]}"
@@ -241,6 +242,17 @@ class ChiefAgent(BaseAgent):
             "whale_rapid_distribution_detected",
             "evaluation_horizon_900s_elapsed",
         ]
+
+        if llm_advisory:
+            reason = f"{reason} | LLM [{llm_advisory.model}]: {llm_advisory.summary}"
+            for r in getattr(llm_advisory, "risks", []):
+                if r not in identified_risks:
+                    identified_risks.append(f"LLM_RISK: {r}")
+            for cond in getattr(llm_advisory, "invalidation_conditions", []):
+                if cond not in invalidation_conds:
+                    invalidation_conds.append(cond)
+            if getattr(llm_advisory, "decision", None) == AgentDecision.VETO:
+                unfavorable_signals.append("LLM_ADVISORY_CAUTIONARY_VETO")
 
         # Explicit confidence calculation: weighted combination of scan, whale, quant, skeptic
         conf_weights = {"SCAN": 0.20, "WHALE": 0.35, "QUANT": 0.25, "SKEPTIC": 0.20}

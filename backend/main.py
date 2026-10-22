@@ -53,7 +53,9 @@ async def lifespan(app: FastAPI):
     event_bus = EventBus()
     token_radar = TokenRadar(repo)
     whale_engine = WhaleIntelligenceEngine(repo)
-    agent_orchestrator = AgentOrchestrator(repo)
+    from backend.llm.client import LLMClient
+    llm_client = LLMClient()
+    agent_orchestrator = AgentOrchestrator(repo, llm_client=llm_client)
     pos_manager = PositionManager(repo)
     accounting = PaperAccounting(repo)
     broker = PaperBroker(accounting, pos_manager, repo)
@@ -107,6 +109,7 @@ async def lifespan(app: FastAPI):
     routes_module.live_order_manager_instance = live_order_mgr
     routes_module.wallet_service_instance = wallet_svc
     routes_module.risk_guard_instance = risk_guard
+    routes_module.llm_client_instance = llm_client
 
     yield
 
@@ -114,6 +117,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down %s...", settings.PROJECT_NAME)
     await engine.shutdown()
     await rpc_client.close()
+    await llm_client.close()
 
 
 app = FastAPI(

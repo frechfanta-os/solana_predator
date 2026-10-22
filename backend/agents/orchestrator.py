@@ -20,6 +20,9 @@ from backend.agents.risk import RiskAgent
 from backend.agents.chief import ChiefAgent
 from backend.agents.audit import AuditAgent
 from backend.database.repository import Repository
+from backend.llm.client import LLMClient
+from backend.llm.models import AgentLLMAdvisory
+from backend.llm.prompt_templates import CHIEF_SYNTHESIS_SYSTEM_PROMPT, format_agent_user_prompt
 from backend.config import settings
 
 logger = logging.getLogger("predator.agents.orchestrator")
@@ -28,8 +31,9 @@ logger = logging.getLogger("predator.agents.orchestrator")
 class AgentOrchestrator:
     """Manages parallel evaluation of specialized analysis agents and synthesizes decisions."""
 
-    def __init__(self, repository: Repository):
+    def __init__(self, repository: Repository, llm_client: Optional[LLMClient] = None):
         self.repository = repository
+        self.llm_client = llm_client or LLMClient()
         self.scan = ScanAgent()
         self.whale = WhaleAgent()
         self.vet = VetAgent()
@@ -70,23 +74,27 @@ class AgentOrchestrator:
             elif isinstance(res, Exception):
                 logger.error("Agent execution failed with exception: %s", res)
 
-        # 2. Optional LLM invocation (outside critical path with bounded timeout)
-        if settings.LLM_ENABLED:
+        # 2. Optional LLM advisory invocation (outside critical path with bounded timeout)
+        llm_advisory: Optional[AgentLLMAdvisory] = None
+        if self.llm_client and self.llm_client.enabled:
             try:
-                # Simulated or real LLM advisory check
-                await asyncio.wait_for(self._call_optional_llm(event), timeout=settings.LLM_TIMEOUT_SECONDS)
+                llm_advisory = await asyncio.wait_for(
+                    self._query_llm_advisory(event, results, context),
+                    timeout=self.llm_client.timeout_seconds,
+                )
             except asyncio.TimeoutError:
-                logger.warning("LLM advisory timed out after %.1fs. Falling back safely.", settings.LLM_TIMEOUT_SECONDS)
+                logger.warning("LLM advisory timed out after %.1fs. Falling back safely.", self.llm_client.timeout_seconds)
             except Exception as e:
                 logger.debug("LLM advisory skipped: %s", e)
 
-        # 3. Chief consensus synthesis
-        consensus = self.chief.synthesize(event, results, start_mono)
+        # 3. Chief consensus synthesis (incorporates LLM insights if available)
+        consensus = self.chief.synthesize(event, results, start_mono, llm_advisory=llm_advisory)
 
         # 4. Audit execution
         audit_context = {
             "preliminary_decision": consensus.final_decision,
             "agent_latencies": latencies,
+            "llm_advisory_active": llm_advisory is not None,
         }
         audit_res = await self.audit.evaluate(event, audit_context)
         results[AgentName.AUDIT.value] = audit_res
@@ -106,6 +114,35 @@ class AgentOrchestrator:
             logger.error("Failed to persist chief decision: %s", e)
 
         return consensus
+
+    async def _query_llm_advisory(
+        self,
+        event: NormalizedMarketEvent,
+        results: Dict[str, AgentResult],
+        context: Dict[str, Any],
+    ) -> Optional[AgentLLMAdvisory]:
+        """Query LLM for qualitative synthesis of multi-agent observations."""
+        signals_summary = {
+            ag: {
+                "decision": res.decision.value if hasattr(res.decision, "value") else str(res.decision),
+                "reasons": res.reason_codes,
+                "confidence": res.confidence,
+                "score": res.score,
+            }
+            for ag, res in results.items()
+        }
+        user_prompt = format_agent_user_prompt(
+            token_mint=event.token_mint,
+            event_data=event.model_dump(),
+            context=context,
+            contributing_agent_signals=signals_summary,
+        )
+        return await self.llm_client.query_structured_advisory(
+            agent_name=AgentName.CHIEF.value,
+            token_mint=event.token_mint,
+            system_prompt=CHIEF_SYNTHESIS_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+        )
 
     async def _call_optional_llm(self, event: NormalizedMarketEvent) -> None:
         """Advisory LLM call stub (non-critical path)."""

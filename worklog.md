@@ -215,3 +215,108 @@
 - **`/root/aidesk`**: Untouched, clean git working tree (`git status` verified).
 - **`/root/gmgn_sentinel_desk`**: Untouched, clean git working tree (`git status` verified).
 - All changes are strictly confined to `/root/solana_predator`.
+
+## Phase 4 Initial State — LLM GLM-5.3-Flash Integration (2026-10-22)
+
+- **Repository Path**: `/root/solana_predator`
+- **Initial Commit**: `5e913b0` ("feat(phase3): add multi-agent decision engine, measurable learning, and live trading with independent risk controls")
+- **Protected Directories Verified Clean**:
+  - `/root/aidesk`: untouched, clean working tree (`git status` clean).
+  - `/root/gmgn_sentinel_desk`: untouched, clean working tree (`git status` clean).
+- **Existing Baseline Test Suite**:
+  - Backend: 58 / 58 passing tests (`pytest -v backend/tests/`).
+  - Frontend: 5 / 5 passing tests (`flutter test`), 0 issues (`flutter analyze`).
+  - Web Build: `build/web` compilation clean.
+- **Mission Scope**:
+  - Integrate OpenAI Chat Completions compatible LLM client targeting `glm-5.3-flash`.
+  - Configurable endpoints and authentication via environment variables (`LLM_ENABLED`, `LLM_PROVIDER`, `LLM_API_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES`, `LLM_MAX_CONCURRENCY`).
+  - Centralized, resilient, rate-limited, concurrency-controlled, typed error handling client with secret redaction.
+  - Multi-agent advisory integration across CHIEF, SCAN, WHALE, VET, QUANT, SKEPTIC, SIZE, RISK, AUDIT.
+  - Full fallback/degraded mode without breaking deterministic pipelines, Paper Trading, or RISK veto.
+  - Zero private keys or real API keys committed to git. DeepSeek integration excluded per user instruction.
+
+### Phase 4 Execution — GLM-5.3-Flash Implementation & Verification
+
+#### 1. Centralized Provider Configuration
+- Updated `backend/config.py`:
+  - `LLM_ENABLED` (default `false`)
+  - `LLM_PROVIDER` (default `space_z`)
+  - `LLM_API_BASE_URL` (default `https://preview-chat-5b88a64e-2cfd-4430-8a11-8a8190f3f6b2.space-z.ai/api/provider/v1`)
+  - `LLM_API_KEY` (generic env var, uncommitted)
+  - `LLM_MODEL` (default `glm-5.3-flash`)
+  - `LLM_TIMEOUT_SECONDS` (default `15.0`)
+  - `LLM_MAX_RETRIES` (default `3`)
+  - `LLM_MAX_CONCURRENCY` (default `5`)
+  - `LLM_TEMPERATURE` (default `0.2`)
+  - `LLM_MAX_TOKENS` (default `1024`)
+  - `LLM_STREAM` (default `false`)
+  - `LLM_AUTH_HEADER_STYLE` (default `bearer`)
+- Created `/root/solana_predator/.env.example` with dummy values (`sk-placeholder-do-not-commit`).
+- Verified that `.env` and `.env.*` remain strictly excluded from version control via `.gitignore`.
+- Per user instruction, eliminated DeepSeek integration and focused strictly on the GLM-5.3-Flash OpenAI-compatible architecture.
+
+#### 2. Centralized LLM Client (`backend/llm/`)
+- Created `backend/llm/exceptions.py`: Typed hierarchy (`LLMError`, `LLMConfigurationError`, `LLMAuthenticationError`, `LLMRateLimitError`, `LLMTimeoutError`, `LLMServerError`, `LLMResponseFormatError`, `LLMUnavailableError`).
+- Created `backend/llm/models.py`: Validated Pydantic contracts for `ChatMessage`, `ChatCompletionRequest`, `ChatCompletionResponse`, `ChatCompletionChoice`, `ChatCompletionUsage`, and `AgentLLMAdvisory`.
+- Created `backend/llm/client.py` (`LLMClient`):
+  - Standard Chat Completions URL construction (`/chat/completions`).
+  - Strict header secret masking (`mask_headers()`) preventing key leakage in logs.
+  - Concurrency limiter with `asyncio.Semaphore(max_concurrency)`.
+  - Exponential backoff with random jitter for 429 and 5xx errors.
+  - Instant non-retry rejection on 401/403 errors.
+  - Monotonic latency tracking (`time.perf_counter()`).
+  - Operational counters (`call_count`, `error_count`, `avg_latency_ms`).
+  - Injectable session support for deterministic offline mock testing.
+- Created `backend/llm/prompt_templates.py`:
+  - Specialized system prompts for all 9 agents (CHIEF, SCAN, WHALE, VET, QUANT, SKEPTIC, SIZE, RISK, AUDIT).
+  - Anti-prompt-injection isolation boundary (`<market_event_data>`).
+- Created `backend/llm/__init__.py`.
+
+#### 3. Multi-Agent Advisory Integration & Safety Gating
+- Updated `backend/agents/chief.py`:
+  - `ChiefAgent.synthesize` accepts optional `llm_advisory`.
+  - Enriches synthesis rationale, identified risks, and invalidation conditions.
+  - **Inviolable safety invariant maintained**: `RISK` veto is evaluated first and remains absolute; LLM cannot override VETO or force execution.
+- Updated `backend/agents/orchestrator.py`:
+  - `AgentOrchestrator` integrates optional `LLMClient` with bounded timeout.
+  - In fallback/degraded mode (when disabled or failing), queries are bypassed or caught cleanly without affecting deterministic pipeline execution.
+- Updated `backend/main.py`:
+  - Instantiates `LLMClient` during application startup lifespan and closes session on shutdown.
+  - Injects `llm_client` into `routes_module`.
+- Updated `backend/api/routes.py`:
+  - `GET /api/llm/status`: Telemetry endpoint returning active model, provider, counters, and masked keys.
+  - `POST /api/llm/analyze`: Ad-hoc token advisory endpoint with graceful fallback handling.
+
+#### 4. Empirical Test Suite Results
+- Created `backend/tests/test_llm_integration.py` containing 18 rigorous unit tests:
+  1. URL construction (`/chat/completions`).
+  2. Model selection (`glm-5.3-flash`).
+  3. Header secret masking without exposing keys.
+  4. OpenAI message formatting.
+  5. Valid response parsing.
+  6. Empty response handling (`LLMResponseFormatError`).
+  7. Malformed non-JSON response handling (`LLMResponseFormatError`).
+  8. Authentication errors (401 without retries).
+  9. Rate limit errors (429 with backoff retry).
+  10. Server errors (500/503 with retry).
+  11. Timeout handling (`LLMTimeoutError`).
+  12. Task cancellation handling (`asyncio.CancelledError`).
+  13. Concurrency bounding (`asyncio.Semaphore`).
+  14. Fallback when disabled or failing.
+  15. Structured output parsing (`AgentLLMAdvisory`).
+  16. Preservation of RISK veto regardless of LLM advisory.
+  17. Impossibility for LLM to sign or broadcast transactions.
+  18. Client status telemetry without key leakage.
+- Updated `backend/tests/test_api_and_websocket.py` with routes tests.
+- **Backend Test Suite Result**: **78 / 78 tests passed (100% green, 22.87s)**.
+- **Frontend Quality Result**: `flutter analyze` passed with **0 issues**; **5 / 5 Flutter widget tests passed**.
+
+#### 5. Documentation & Deliverables
+- `docs/LLM_INTEGRATION.md`: Complete architectural guide, environment variables, multi-agent advisory roles, anti-injection defenses, and REST endpoints.
+- `docs/ACCEPTANCE_REPORT.md`: Updated formal acceptance matrix reflecting Phase 4.
+- `worklog.md`: Detailed changelog.
+
+#### 6. Confirmation of Project Isolation
+- `/root/aidesk`: untouched, clean working tree (`git status` clean).
+- `/root/gmgn_sentinel_desk`: untouched, clean working tree (`git status` clean).
+- Zero secrets committed to git. All modifications strictly isolated in `/root/solana_predator`.

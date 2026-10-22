@@ -67,9 +67,22 @@ class Settings(BaseModel):
     DEDUPLICATION_CACHE_SIZE: int = int(os.getenv("DEDUPLICATION_CACHE_SIZE", "50000"))
     DEDUPLICATION_TTL_SEC: float = float(os.getenv("DEDUPLICATION_TTL_SEC", "600.0"))
     
-    # LLM (Optional & outside critical path)
-    LLM_ENABLED: bool = os.getenv("LLM_ENABLED", "false").lower() == "true"
-    LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "3.0"))
+    # LLM Configuration (OpenAI Chat Completions Compatible - GLM-5.3-Flash)
+    LLM_ENABLED: bool = os.getenv("LLM_ENABLED", "false").lower() in ("true", "1", "yes")
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "space_z")
+    LLM_API_BASE_URL: str = os.getenv(
+        "LLM_API_BASE_URL",
+        "https://preview-chat-5b88a64e-2cfd-4430-8a11-8a8190f3f6b2.space-z.ai/api/provider/v1"
+    ).rstrip("/")
+    LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "glm-5.3-flash")
+    LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "15.0"))
+    LLM_MAX_RETRIES: int = int(os.getenv("LLM_MAX_RETRIES", "3"))
+    LLM_MAX_CONCURRENCY: int = int(os.getenv("LLM_MAX_CONCURRENCY", "5"))
+    LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+    LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
+    LLM_STREAM: bool = os.getenv("LLM_STREAM", "false").lower() in ("true", "1", "yes")
+    LLM_AUTH_HEADER_STYLE: str = os.getenv("LLM_AUTH_HEADER_STYLE", "bearer")  # bearer, x-api-key, or both
     
     # Whale Tracking Configuration (Tracked public wallets)
     TRACKED_WHALE_WALLETS: List[str] = [

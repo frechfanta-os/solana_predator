@@ -32,6 +32,15 @@ learning_evaluator_instance: Optional[Any] = None
 live_order_manager_instance: Optional[Any] = None
 wallet_service_instance: Optional[Any] = None
 risk_guard_instance: Optional[Any] = None
+llm_client_instance: Optional[Any] = None
+
+
+def get_llm_client() -> Any:
+    global llm_client_instance
+    if not llm_client_instance:
+        from backend.llm.client import LLMClient
+        llm_client_instance = LLMClient()
+    return llm_client_instance
 
 
 def get_engine() -> PredatorEngine:
@@ -493,3 +502,71 @@ async def get_risk_audit_log(
         return out
     finally:
         conn.close()
+
+
+# --- LLM Provider Routes (GLM-5.3-Flash / OpenAI Compatible) ---
+
+class LLMAnalysisRequest(BaseModel):
+    token_mint: str
+    agent_role: str = "CHIEF"
+    context: Optional[Dict[str, Any]] = None
+
+
+@router.get("/llm/status", response_model=Dict[str, Any])
+async def get_llm_status(
+    llm: Any = Depends(get_llm_client),
+):
+    """Retrieve operational status, active model, and error telemetry of the LLM provider."""
+    return llm.get_status()
+
+
+@router.post("/llm/analyze", response_model=Dict[str, Any])
+async def trigger_llm_analysis(
+    req: LLMAnalysisRequest,
+    llm: Any = Depends(get_llm_client),
+):
+    """Request ad-hoc qualitative multi-agent analysis for a token via LLM."""
+    if not llm.enabled or not llm.api_key:
+        return {
+            "status": "LLM_NOT_CONFIGURED",
+            "message": "LLM is disabled or missing credentials. Operating in deterministic fallback mode.",
+            "advisory": None,
+        }
+    from backend.llm.prompt_templates import (
+        CHIEF_SYNTHESIS_SYSTEM_PROMPT,
+        SKEPTIC_SYSTEM_PROMPT,
+        WHALE_SYSTEM_PROMPT,
+        VET_SYSTEM_PROMPT,
+        QUANT_SYSTEM_PROMPT,
+        format_agent_user_prompt,
+    )
+    prompt_map = {
+        "CHIEF": CHIEF_SYNTHESIS_SYSTEM_PROMPT,
+        "SKEPTIC": SKEPTIC_SYSTEM_PROMPT,
+        "WHALE": WHALE_SYSTEM_PROMPT,
+        "VET": VET_SYSTEM_PROMPT,
+        "QUANT": QUANT_SYSTEM_PROMPT,
+    }
+    sys_prompt = prompt_map.get(req.agent_role.upper(), CHIEF_SYNTHESIS_SYSTEM_PROMPT)
+    user_prompt = format_agent_user_prompt(
+        token_mint=req.token_mint,
+        event_data={"token_mint": req.token_mint},
+        context=req.context or {},
+        contributing_agent_signals={},
+    )
+    advisory = await llm.query_structured_advisory(
+        agent_name=req.agent_role.upper(),
+        token_mint=req.token_mint,
+        system_prompt=sys_prompt,
+        user_prompt=user_prompt,
+    )
+    if not advisory:
+        return {
+            "status": "LLM_FALLBACK",
+            "message": "LLM query failed or timed out. Deterministic fallback engaged.",
+            "advisory": None,
+        }
+    return {
+        "status": "SUCCESS",
+        "advisory": advisory.model_dump(),
+    }
