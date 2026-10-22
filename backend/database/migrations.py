@@ -3,11 +3,11 @@
 import sqlite3
 import time
 import logging
-from backend.database.schema import SCHEMA_V1
+from backend.database.schema import SCHEMA_V1, SCHEMA_V2
 
 logger = logging.getLogger("predator.database.migrations")
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 def apply_migrations(db_path: str) -> None:
@@ -44,6 +44,16 @@ def apply_migrations(db_path: str) -> None:
             )
             conn.commit()
             logger.info("Schema V1 applied successfully.")
+
+        if current_version < 2:
+            logger.info("Applying Schema V2 to %s", db_path)
+            cursor.executescript(SCHEMA_V2)
+            cursor.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (2, ?);",
+                (time.time(),),
+            )
+            conn.commit()
+            logger.info("Schema V2 applied successfully.")
         else:
             logger.debug("Database %s already at schema version %s.", db_path, current_version)
             

@@ -34,6 +34,8 @@ htmlcov/
 solana_predator.db*
 
 # Flutter / Dart
+!frontend/lib/
+!frontend/lib/**
 frontend/.dart_tool/
 frontend/.flutter-plugins
 frontend/.flutter-plugins-dependencies

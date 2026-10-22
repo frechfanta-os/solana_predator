@@ -28,6 +28,10 @@ engine_instance: Optional[PredatorEngine] = None
 repository_instance: Optional[Repository] = None
 health_instance: Optional[HealthTracker] = None
 replay_instance: Optional[DeterministicReplayProvider] = None
+learning_evaluator_instance: Optional[Any] = None
+live_order_manager_instance: Optional[Any] = None
+wallet_service_instance: Optional[Any] = None
+risk_guard_instance: Optional[Any] = None
 
 
 def get_engine() -> PredatorEngine:
@@ -52,6 +56,63 @@ def get_replay() -> DeterministicReplayProvider:
     if not replay_instance:
         raise HTTPException(status_code=503, detail="Replay provider initializing")
     return replay_instance
+
+
+def get_evaluator() -> Any:
+    if not learning_evaluator_instance:
+        from backend.learning.evaluator import DecisionOutcomeEvaluator
+        return DecisionOutcomeEvaluator(get_repo())
+    return learning_evaluator_instance
+
+
+def get_live_order_manager() -> Any:
+    if not live_order_manager_instance:
+        raise HTTPException(status_code=503, detail="Live order manager not initialized")
+    return live_order_manager_instance
+
+
+def get_wallet_service() -> Any:
+    if not wallet_service_instance:
+        raise HTTPException(status_code=503, detail="Wallet service not initialized")
+    return wallet_service_instance
+
+
+def get_risk_guard() -> Any:
+    if not risk_guard_instance:
+        raise HTTPException(status_code=503, detail="Risk guard not initialized")
+    return risk_guard_instance
+
+
+# --- Request Models ---
+
+class ConnectWalletRequest(BaseModel):
+    wallet_address: str
+
+
+class CreateProposalRequest(BaseModel):
+    token_mint: str
+    token_symbol: str = "TOKEN"
+    amount_sol: float
+    slippage_bps: float = 100.0
+    current_token_price_usd: Optional[float] = None
+
+
+class BroadcastSignedTxRequest(BaseModel):
+    signed_tx_base64: str
+
+
+class RejectProposalRequest(BaseModel):
+    reason: str = "Rejected by user"
+
+
+class KillSwitchRequest(BaseModel):
+    active: bool
+
+
+class SimulateStrategyRequest(BaseModel):
+    candidate_version: str
+    min_confidence_filter: float = 0.85
+    target_multiplier: float = 1.15
 
 
 # --- Endpoints ---
@@ -216,3 +277,219 @@ async def reset_paper_trading(
         "cash_balance_usd": engine.accounting.cash_balance,
         "security_notice": settings.SECURITY_NOTICE,
     }
+
+
+# --- Multi-Agent Structured Consensus Endpoints ---
+
+@router.get("/chief/decisions", response_model=List[Dict[str, Any]])
+async def get_chief_decisions(
+    limit: int = Query(default=50, ge=1, le=200),
+    repo: Repository = Depends(get_repo),
+):
+    """Retrieve structured, persistent, and reproducible multi-agent decisions."""
+    return await repo.get_recent_chief_decisions(limit=limit)
+
+
+# --- Measurable Learning Endpoints ---
+
+@router.get("/learning/metrics", response_model=Dict[str, Any])
+async def get_learning_metrics(
+    evaluator: Any = Depends(get_evaluator),
+    repo: Repository = Depends(get_repo),
+):
+    """Retrieve comprehensive learning performance metrics, accuracy rate, and segmentations."""
+    outcomes_raw = await repo.get_decision_outcomes(limit=500)
+    from backend.learning.models import DecisionOutcome
+    outcomes = [DecisionOutcome(**o) for o in outcomes_raw]
+    metrics = evaluator.compute_aggregate_metrics(outcomes)
+    return metrics.model_dump()
+
+
+@router.post("/learning/evaluate", response_model=Dict[str, Any])
+async def trigger_learning_evaluation(
+    evaluator: Any = Depends(get_evaluator),
+    repo: Repository = Depends(get_repo),
+):
+    """Evaluate past decisions against subsequent price history without lookahead bias."""
+    decisions = await repo.get_recent_chief_decisions(limit=100)
+    evaluated_count = 0
+    from backend.learning.temporal_split import assign_temporal_splits
+    from backend.learning.models import DatasetSplitType
+
+    splits = assign_temporal_splits(decisions)
+    for dec, split in splits:
+        # Fetch subsequent prices for the token
+        events = await repo.get_token_market_events(dec["token_mint"], limit=50)
+        outcome = evaluator.evaluate_single_decision(dec, events, split_type=split)
+        if outcome:
+            await repo.save_decision_outcome(outcome)
+            evaluated_count += 1
+
+    return {
+        "status": "EVALUATION_COMPLETE",
+        "decisions_evaluated": evaluated_count,
+        "timestamp": time.time(),
+    }
+
+
+@router.get("/learning/benchmarks", response_model=List[Dict[str, Any]])
+async def get_strategy_benchmarks(
+    repo: Repository = Depends(get_repo),
+):
+    """List versioned strategy benchmarks and baseline comparisons."""
+    return await repo.get_strategy_benchmarks()
+
+
+@router.post("/learning/simulate_strategy", response_model=Dict[str, Any])
+async def simulate_candidate_strategy(
+    req: SimulateStrategyRequest,
+    repo: Repository = Depends(get_repo),
+):
+    """Simulate a candidate strategy on historical validation data before adoption."""
+    from backend.learning.optimizer import StrategyOptimizer
+    from backend.learning.models import DecisionOutcome
+    optimizer = StrategyOptimizer(repo)
+    outcomes_raw = await repo.get_decision_outcomes(limit=200)
+    outcomes = [DecisionOutcome(**o) for o in outcomes_raw]
+    
+    benchmark = optimizer.simulate_strategy_candidate(
+        candidate_version=req.candidate_version,
+        baseline_outcomes=outcomes,
+        min_confidence_filter=req.min_confidence_filter,
+        target_multiplier=req.target_multiplier,
+    )
+    await repo.save_strategy_benchmark(benchmark)
+    return benchmark.model_dump()
+
+
+# --- Live Trading Endpoints ---
+
+@router.post("/live/wallet/connect", response_model=Dict[str, Any])
+async def connect_live_wallet(
+    req: ConnectWalletRequest,
+    wallet_svc: Any = Depends(get_wallet_service),
+):
+    """Connect an external Solana wallet by public key only (No private keys)."""
+    connection = await wallet_svc.connect_wallet(req.wallet_address)
+    return {
+        "status": "CONNECTED",
+        "wallet": connection.model_dump(),
+        "security_notice": "LIVE MARKET DATA — EXPLICIT USER SIGNATURE REQUIRED FOR TRANSACTIONS",
+    }
+
+
+@router.post("/live/wallet/disconnect", response_model=Dict[str, Any])
+async def disconnect_live_wallet(
+    wallet_svc: Any = Depends(get_wallet_service),
+):
+    """Disconnect active wallet."""
+    wallet_svc.disconnect_wallet()
+    return {"status": "DISCONNECTED"}
+
+
+@router.get("/live/wallet/status", response_model=Dict[str, Any])
+async def get_live_wallet_status(
+    wallet_svc: Any = Depends(get_wallet_service),
+):
+    """Get active wallet public key, SOL balance, and token accounts."""
+    status = wallet_svc.get_status()
+    if not status:
+        return {"is_connected": False, "wallet": None}
+    return {"is_connected": True, "wallet": status.model_dump()}
+
+
+@router.get("/live/proposals", response_model=List[Dict[str, Any]])
+async def list_live_proposals(
+    limit: int = Query(default=50, ge=1, le=100),
+    status: Optional[str] = None,
+    repo: Repository = Depends(get_repo),
+):
+    """List live trade proposals and their independent risk checklist."""
+    return await repo.get_live_proposals(limit=limit, status=status)
+
+
+@router.post("/live/proposals/create", response_model=Dict[str, Any])
+async def create_live_proposal(
+    req: CreateProposalRequest,
+    order_mgr: Any = Depends(get_live_order_manager),
+):
+    """Prepare an unsigned live trade proposal with independent risk audit."""
+    proposal = await order_mgr.create_trade_proposal(
+        token_mint=req.token_mint,
+        token_symbol=req.token_symbol,
+        amount_sol=req.amount_sol,
+        slippage_bps=req.slippage_bps,
+        current_token_price_usd=req.current_token_price_usd,
+    )
+    return proposal.model_dump()
+
+
+@router.post("/live/proposals/{proposal_id}/broadcast", response_model=Dict[str, Any])
+async def broadcast_signed_live_transaction(
+    proposal_id: str,
+    req: BroadcastSignedTxRequest,
+    order_mgr: Any = Depends(get_live_order_manager),
+):
+    """Broadcast an explicitly user-signed transaction to the Solana network."""
+    tx_record = await order_mgr.submit_user_signature(
+        proposal_id=proposal_id,
+        signed_tx_base64=req.signed_tx_base64,
+    )
+    return tx_record.model_dump()
+
+
+@router.post("/live/proposals/{proposal_id}/reject", response_model=Dict[str, Any])
+async def reject_live_proposal(
+    proposal_id: str,
+    req: RejectProposalRequest,
+    order_mgr: Any = Depends(get_live_order_manager),
+):
+    """Explicitly reject a live trade proposal."""
+    await order_mgr.reject_proposal_by_user(proposal_id, req.reason)
+    return {"status": "REJECTED_BY_USER", "proposal_id": proposal_id}
+
+
+@router.get("/live/transactions", response_model=List[Dict[str, Any]])
+async def get_live_transactions(
+    limit: int = Query(default=50, ge=1, le=100),
+    repo: Repository = Depends(get_repo),
+):
+    """List broadcast transactions and their on-chain confirmation status."""
+    return await repo.get_live_transactions(limit=limit)
+
+
+@router.post("/live/kill-switch", response_model=Dict[str, Any])
+async def toggle_emergency_kill_switch(
+    req: KillSwitchRequest,
+    admin_ok: bool = Depends(require_admin_auth),
+    risk_guard: Any = Depends(get_risk_guard),
+):
+    """Admin-only Emergency Kill-Switch stopping all live trade proposals."""
+    risk_guard.set_emergency_kill_switch(req.active)
+    return {
+        "emergency_kill_switch_active": risk_guard.emergency_kill_switch_active,
+        "status": "KILL_SWITCH_ENGAGED" if req.active else "KILL_SWITCH_DISENGAGED",
+        "timestamp": time.time(),
+    }
+
+
+@router.get("/live/risk-audit", response_model=List[Dict[str, Any]])
+async def get_risk_audit_log(
+    limit: int = Query(default=50, ge=1, le=100),
+    repo: Repository = Depends(get_repo),
+):
+    """Audit log of independent risk verifications."""
+    conn = repo._get_connection()
+    try:
+        cursor = conn.execute("SELECT * FROM risk_audit_log ORDER BY timestamp DESC LIMIT ?", (limit,))
+        rows = cursor.fetchall()
+        out = []
+        for r in rows:
+            item = dict(r)
+            if item.get("details_json"):
+                import json
+                item["details"] = json.loads(item["details_json"])
+            out.append(item)
+        return out
+    finally:
+        conn.close()

@@ -44,6 +44,9 @@ class PredatorEngine:
         paper_accounting: PaperAccounting,
         paper_broker: PaperBroker,
         exit_monitor: ExitMonitor,
+        live_order_manager: Optional[Any] = None,
+        learning_evaluator: Optional[Any] = None,
+        trading_mode: str = "PAPER",
     ):
         self.repository = repository
         self.event_bus = event_bus
@@ -56,6 +59,9 @@ class PredatorEngine:
         self.accounting = paper_accounting
         self.broker = paper_broker
         self.exit_monitor = exit_monitor
+        self.live_order_manager = live_order_manager
+        self.learning_evaluator = learning_evaluator
+        self.trading_mode = trading_mode
 
         # WebSocket broadcast hook
         self._ws_broadcast_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None
@@ -204,6 +210,19 @@ class PredatorEngine:
                     current_price_usd=event.price_usd,
                     pool_liquidity_usd=event.liquidity_usd,
                 )
+                # If Live Order Manager is enabled and wallet connected, generate an audited proposal for user review
+                if self.live_order_manager and self.live_order_manager.wallet_service.get_status():
+                    try:
+                        amt_sol = round(consensus.recommended_position_usd / 150.0, 4)
+                        await self.live_order_manager.create_trade_proposal(
+                            token_mint=event.token_mint,
+                            token_symbol=token_symbol,
+                            amount_sol=amt_sol,
+                            current_token_price_usd=event.price_usd,
+                            data_freshness_sec=event.freshness_seconds,
+                        )
+                    except Exception as e:
+                        logger.debug("Live proposal creation skipped: %s", e)
         elif consensus.final_decision == AgentDecision.VETO:
             await self.token_radar.advance_lifecycle(
                 event.token_mint,

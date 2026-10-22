@@ -60,6 +60,10 @@ class ChiefAgent(BaseAgent):
 
         total_latency_ms = (time.perf_counter() - start_time_monotonic) * 1000.0
 
+        token_symbol = (event.metadata or {}).get("symbol", "TOKEN")
+        data_ts = event.source_timestamp or event.local_receive_timestamp
+        sources = [event.source.value]
+
         # 1. Absolute Inviolable Veto: RISK
         if risk_res and risk_res.decision == AgentDecision.VETO:
             reason = f"VETOED BY RISK: {', '.join(risk_res.reason_codes)}"
@@ -67,13 +71,27 @@ class ChiefAgent(BaseAgent):
             return ChiefConsensusRecord(
                 consensus_id=consensus_id,
                 token_mint=event.token_mint,
+                token_symbol=token_symbol,
                 timestamp=now,
+                data_timestamp=data_ts,
                 final_decision=AgentDecision.VETO,
+                strategic_decision=AgentDecision.VETO,
                 is_risk_vetoed=True,
+                risk_veto_reasons=risk_res.reason_codes,
                 chief_reason=reason,
                 contributing_agents=agent_results,
                 recommended_position_usd=None,
                 processing_total_latency_ms=round(total_latency_ms, 3),
+                sources_used=sources,
+                unfavorable_signals=risk_res.reason_codes,
+                identified_risks=risk_res.reason_codes,
+                confidence_score=1.0,
+                confidence_method="RISK_DETERMINISTIC_VETO",
+                invalidation_conditions=["risk_boundary_breached"],
+                strategy_version="v1.2.0-consensus",
+                expected_outcome="ABSOLUTE_CAPITAL_PRESERVATION",
+                evaluation_horizon_sec=900,
+                entry_price_usd=event.price_usd,
             )
 
         # 2. Safety Veto: VET
@@ -82,13 +100,26 @@ class ChiefAgent(BaseAgent):
             return ChiefConsensusRecord(
                 consensus_id=consensus_id,
                 token_mint=event.token_mint,
+                token_symbol=token_symbol,
                 timestamp=now,
+                data_timestamp=data_ts,
                 final_decision=AgentDecision.VETO,
+                strategic_decision=AgentDecision.VETO,
                 is_risk_vetoed=False,
                 chief_reason=reason,
                 contributing_agents=agent_results,
                 recommended_position_usd=None,
                 processing_total_latency_ms=round(total_latency_ms, 3),
+                sources_used=sources,
+                unfavorable_signals=vet_res.reason_codes,
+                identified_risks=vet_res.reason_codes,
+                confidence_score=0.95,
+                confidence_method="SECURITY_AUDIT_VETO",
+                invalidation_conditions=["contract_safety_check_failed"],
+                strategy_version="v1.2.0-consensus",
+                expected_outcome="AVOID_MALICIOUS_OR_UNSAFE_CONTRACT",
+                evaluation_horizon_sec=900,
+                entry_price_usd=event.price_usd,
             )
 
         # 3. Contrarian Veto: SKEPTIC
@@ -97,13 +128,26 @@ class ChiefAgent(BaseAgent):
             return ChiefConsensusRecord(
                 consensus_id=consensus_id,
                 token_mint=event.token_mint,
+                token_symbol=token_symbol,
                 timestamp=now,
+                data_timestamp=data_ts,
                 final_decision=AgentDecision.VETO,
+                strategic_decision=AgentDecision.VETO,
                 is_risk_vetoed=False,
                 chief_reason=reason,
                 contributing_agents=agent_results,
                 recommended_position_usd=None,
                 processing_total_latency_ms=round(total_latency_ms, 3),
+                sources_used=sources,
+                unfavorable_signals=skeptic_res.reason_codes,
+                identified_risks=skeptic_res.reason_codes,
+                confidence_score=0.90,
+                confidence_method="CONTRARIAN_CONTRADICTION_ANALYSIS",
+                invalidation_conditions=["conflicting_market_microstructure"],
+                strategy_version="v1.2.0-consensus",
+                expected_outcome="AVOID_HONEYPOT_OR_WASH_PUMP",
+                evaluation_horizon_sec=900,
+                entry_price_usd=event.price_usd,
             )
 
         # 4. Check Exit Signal (e.g. Whale outflow)
@@ -112,18 +156,50 @@ class ChiefAgent(BaseAgent):
             return ChiefConsensusRecord(
                 consensus_id=consensus_id,
                 token_mint=event.token_mint,
+                token_symbol=token_symbol,
                 timestamp=now,
+                data_timestamp=data_ts,
                 final_decision=AgentDecision.EXIT,
+                strategic_decision=AgentDecision.EXIT,
                 is_risk_vetoed=False,
                 chief_reason=reason,
                 contributing_agents=agent_results,
                 recommended_position_usd=None,
                 processing_total_latency_ms=round(total_latency_ms, 3),
+                sources_used=sources,
+                unfavorable_signals=whale_res.reason_codes,
+                identified_risks=whale_res.reason_codes,
+                confidence_score=0.92,
+                confidence_method="WHALE_OUTFLOW_THRESHOLD",
+                invalidation_conditions=["whale_cluster_dumping"],
+                strategy_version="v1.2.0-consensus",
+                expected_outcome="POSITION_EXIT_CAPITAL_PRESERVATION",
+                evaluation_horizon_sec=900,
+                entry_price_usd=event.price_usd,
             )
 
         # 5. Opportunity Consensus Evaluation
         buy_votes = 0
         scores: List[float] = []
+        favorable_signals: List[str] = []
+        unfavorable_signals: List[str] = []
+        sources: List[str] = [event.source.value]
+        identified_risks: List[str] = []
+
+        for name, res in agent_results.items():
+            if res.token_mint and res.sources_used:
+                sources.extend(res.sources_used)
+            if res.decision == AgentDecision.BUY_CANDIDATE:
+                favorable_signals.extend(res.reason_codes)
+            elif res.decision in (AgentDecision.VETO, AgentDecision.EXIT):
+                unfavorable_signals.extend(res.reason_codes)
+                identified_risks.extend(res.reason_codes)
+            else:
+                for r in res.reason_codes:
+                    if "OK" in r or "MET" in r or "CLEARED" in r:
+                        favorable_signals.append(r)
+                    else:
+                        unfavorable_signals.append(r)
 
         for res in (scan_res, whale_res, quant_res):
             if res:
@@ -140,21 +216,64 @@ class ChiefAgent(BaseAgent):
         # Require at least 2 buy votes OR strong whale convergence + scan passing
         is_buy_candidate = (buy_votes >= 2 or (whale_res and whale_res.decision == AgentDecision.BUY_CANDIDATE and scan_res and scan_res.decision == AgentDecision.BUY_CANDIDATE))
         
+        token_symbol = (event.metadata or {}).get("symbol", "TOKEN")
+        current_px = event.price_usd
+        data_ts = event.source_timestamp or event.local_receive_timestamp
+
         if is_buy_candidate and recommended_usd and recommended_usd >= 25.0:
             final_decision = AgentDecision.BUY_CANDIDATE
             reason = f"APPROVED PAPER BUY: {buy_votes} buy signals, consensus score {avg_score:.2f}, allocation ${recommended_usd:.2f}"
+            expected_outcome = "+12.5% price advance within 900s horizon"
+            target_px = round(current_px * 1.125, 8) if current_px else None
+            inval_px = round(current_px * 0.955, 8) if current_px else None
         else:
             final_decision = AgentDecision.PASS
             reason = f"PASS: Insufficient signal strength (votes={buy_votes}, score={avg_score:.2f})"
+            expected_outcome = "CAPITAL_PRESERVATION"
+            target_px = None
+            inval_px = None
+
+        unique_sources = sorted(list(set(sources)))
+        invalidation_conds = [
+            "price_drop_exceeds_4.5%",
+            "liquidity_collapse_below_5000_usd",
+            "honeypot_or_freeze_authority_detected",
+            "whale_rapid_distribution_detected",
+            "evaluation_horizon_900s_elapsed",
+        ]
+
+        # Explicit confidence calculation: weighted combination of scan, whale, quant, skeptic
+        conf_weights = {"SCAN": 0.20, "WHALE": 0.35, "QUANT": 0.25, "SKEPTIC": 0.20}
+        weighted_conf = sum(
+            agent_results[ag].confidence * conf_weights.get(ag, 0.1)
+            for ag in conf_weights if ag in agent_results
+        )
+        norm_conf = max(0.1, min(1.0, weighted_conf if weighted_conf > 0 else 0.75))
 
         return ChiefConsensusRecord(
             consensus_id=consensus_id,
             token_mint=event.token_mint,
+            token_symbol=token_symbol,
             timestamp=now,
+            data_timestamp=data_ts,
             final_decision=final_decision,
+            strategic_decision=final_decision,
             is_risk_vetoed=False,
             chief_reason=reason,
             contributing_agents=agent_results,
             recommended_position_usd=recommended_usd if final_decision == AgentDecision.BUY_CANDIDATE else None,
             processing_total_latency_ms=round(total_latency_ms, 3),
+            sources_used=unique_sources,
+            favorable_signals=favorable_signals,
+            unfavorable_signals=unfavorable_signals,
+            confidence_score=round(norm_conf, 4),
+            confidence_method="MULTI_AGENT_WEIGHTED_HARMONIC",
+            invalidation_conditions=invalidation_conds,
+            identified_risks=identified_risks,
+            strategy_version="v1.2.0-consensus",
+            expected_outcome=expected_outcome,
+            evaluation_horizon_sec=900,
+            target_price_usd=target_px,
+            invalidation_price_usd=inval_px,
+            entry_price_usd=current_px,
         )

@@ -60,7 +60,26 @@ async def lifespan(app: FastAPI):
     exit_monitor = ExitMonitor(pos_manager)
     replay = DeterministicReplayProvider(event_bus)
 
-    # 3. Create Predator Engine
+    # 3. Instantiate Learning & Live Trading Subsystems
+    from backend.learning.evaluator import DecisionOutcomeEvaluator
+    from backend.market.solana_rpc import SolanaRpcClient
+    from backend.live.independent_risk import IndependentRiskGuard
+    from backend.live.quote_service import LiveQuoteService
+    from backend.live.tx_builder import UnsignedTransactionBuilder
+    from backend.live.wallet import WalletService
+    from backend.live.broadcast_service import LiveBroadcastService
+    from backend.live.order_manager import LiveOrderManager
+
+    evaluator = DecisionOutcomeEvaluator(repo)
+    rpc_client = SolanaRpcClient(http_url=settings.SOLANA_RPC_HTTP, ws_url=settings.SOLANA_RPC_WS)
+    risk_guard = IndependentRiskGuard()
+    quote_svc = LiveQuoteService()
+    tx_builder = UnsignedTransactionBuilder()
+    wallet_svc = WalletService(rpc_client)
+    broadcast_svc = LiveBroadcastService(rpc_client, repo)
+    live_order_mgr = LiveOrderManager(repo, risk_guard, quote_svc, tx_builder, broadcast_svc, wallet_svc)
+
+    # 4. Create Predator Engine
     engine = PredatorEngine(
         repository=repo,
         event_bus=event_bus,
@@ -73,21 +92,28 @@ async def lifespan(app: FastAPI):
         paper_accounting=accounting,
         paper_broker=broker,
         exit_monitor=exit_monitor,
+        live_order_manager=live_order_mgr,
+        learning_evaluator=evaluator,
     )
     engine.set_ws_broadcast_callback(ws_manager.broadcast)
     await engine.initialize()
 
-    # 4. Inject global references into routes module
+    # 5. Inject global references into routes module
     routes_module.engine_instance = engine
     routes_module.repository_instance = repo
     routes_module.health_instance = health
     routes_module.replay_instance = replay
+    routes_module.learning_evaluator_instance = evaluator
+    routes_module.live_order_manager_instance = live_order_mgr
+    routes_module.wallet_service_instance = wallet_svc
+    routes_module.risk_guard_instance = risk_guard
 
     yield
 
     # 5. Shutdown Sequence
     logger.info("Shutting down %s...", settings.PROJECT_NAME)
     await engine.shutdown()
+    await rpc_client.close()
 
 
 app = FastAPI(

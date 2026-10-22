@@ -38,6 +38,23 @@ class AgentResult(BaseModel):
     processing_latency_ms: float
     details: Dict[str, Any] = Field(default_factory=dict)
 
+    # Step 2: Structured, persistent, reproducible decision fields
+    token_mint: Optional[str] = None
+    data_timestamp: Optional[float] = None
+    sources_used: List[str] = Field(default_factory=list)
+    favorable_signals: List[str] = Field(default_factory=list)
+    unfavorable_signals: List[str] = Field(default_factory=list)
+    confidence_method: str = "RULE_BASED_HEURISTIC"
+    strategic_decision: Optional[AgentDecision] = None
+    invalidation_conditions: List[str] = Field(default_factory=list)
+    identified_risks: List[str] = Field(default_factory=list)
+    strategy_version: str = "v1.0.0"
+    expected_outcome: str = "NEUTRAL"
+    evaluation_horizon_sec: int = 900
+    target_price_usd: Optional[float] = None
+    invalidation_price_usd: Optional[float] = None
+    entry_price_usd: Optional[float] = None
+
 
 class ChiefConsensusRecord(BaseModel):
     consensus_id: str
@@ -49,3 +66,22 @@ class ChiefConsensusRecord(BaseModel):
     contributing_agents: Dict[str, AgentResult]
     recommended_position_usd: Optional[float] = None
     processing_total_latency_ms: float
+
+    # Step 2: Structured, persistent, reproducible consensus fields
+    token_symbol: Optional[str] = None
+    data_timestamp: Optional[float] = None
+    sources_used: List[str] = Field(default_factory=list)
+    favorable_signals: List[str] = Field(default_factory=list)
+    unfavorable_signals: List[str] = Field(default_factory=list)
+    confidence_score: float = Field(default=1.0, ge=0.0, le=1.0)
+    confidence_method: str = "MULTI_AGENT_WEIGHTED_HARMONIC"
+    strategic_decision: Optional[AgentDecision] = None
+    invalidation_conditions: List[str] = Field(default_factory=list)
+    identified_risks: List[str] = Field(default_factory=list)
+    strategy_version: str = "v1.1.0-consensus"
+    expected_outcome: str = "CAPITAL_PRESERVATION"
+    evaluation_horizon_sec: int = 900
+    target_price_usd: Optional[float] = None
+    invalidation_price_usd: Optional[float] = None
+    entry_price_usd: Optional[float] = None
+    risk_veto_reasons: List[str] = Field(default_factory=list)

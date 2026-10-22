@@ -202,3 +202,135 @@ CREATE TABLE IF NOT EXISTS system_events (
 );
 CREATE INDEX IF NOT EXISTS idx_system_events_type ON system_events(event_type);
 """
+
+
+SCHEMA_V2 = """
+-- Multi-agent structured consensus decisions
+CREATE TABLE IF NOT EXISTS chief_decisions (
+    consensus_id TEXT PRIMARY KEY,
+    token_mint TEXT NOT NULL,
+    token_symbol TEXT,
+    data_timestamp REAL NOT NULL,
+    decision_timestamp REAL NOT NULL,
+    final_decision TEXT NOT NULL,
+    strategic_decision TEXT,
+    is_risk_vetoed INTEGER NOT NULL DEFAULT 0,
+    chief_reason TEXT NOT NULL,
+    sources_used_json TEXT NOT NULL,
+    favorable_signals_json TEXT NOT NULL,
+    unfavorable_signals_json TEXT NOT NULL,
+    confidence_score REAL NOT NULL,
+    confidence_method TEXT NOT NULL,
+    invalidation_conditions_json TEXT NOT NULL,
+    identified_risks_json TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    expected_outcome TEXT NOT NULL,
+    evaluation_horizon_sec INTEGER NOT NULL,
+    target_price_usd REAL,
+    invalidation_price_usd REAL,
+    entry_price_usd REAL,
+    recommended_position_usd REAL,
+    processing_latency_ms REAL NOT NULL,
+    details_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_chief_decisions_mint ON chief_decisions(token_mint);
+CREATE INDEX IF NOT EXISTS idx_chief_decisions_time ON chief_decisions(decision_timestamp);
+CREATE INDEX IF NOT EXISTS idx_chief_decisions_strat ON chief_decisions(strategy_version);
+
+-- Measurable Learning: Decision outcome evaluations
+CREATE TABLE IF NOT EXISTS decision_outcomes (
+    outcome_id TEXT PRIMARY KEY,
+    consensus_id TEXT NOT NULL,
+    token_mint TEXT NOT NULL,
+    evaluated_at REAL NOT NULL,
+    horizon_sec INTEGER NOT NULL,
+    entry_price_usd REAL NOT NULL,
+    target_price_usd REAL,
+    invalidation_price_usd REAL,
+    peak_price_usd REAL NOT NULL,
+    trough_price_usd REAL NOT NULL,
+    final_price_usd REAL NOT NULL,
+    is_correct INTEGER NOT NULL,
+    is_false_positive INTEGER NOT NULL,
+    is_true_negative INTEGER NOT NULL,
+    simulated_net_return_pct REAL NOT NULL,
+    max_drawdown_pct REAL NOT NULL,
+    price_forecast_error_abs REAL NOT NULL,
+    strategy_version TEXT NOT NULL,
+    split_type TEXT NOT NULL DEFAULT 'TEST',
+    FOREIGN KEY(consensus_id) REFERENCES chief_decisions(consensus_id)
+);
+CREATE INDEX IF NOT EXISTS idx_decision_outcomes_mint ON decision_outcomes(token_mint);
+CREATE INDEX IF NOT EXISTS idx_decision_outcomes_strat ON decision_outcomes(strategy_version);
+CREATE INDEX IF NOT EXISTS idx_decision_outcomes_split ON decision_outcomes(split_type);
+
+-- Strategy version benchmarks
+CREATE TABLE IF NOT EXISTS strategy_benchmarks (
+    version TEXT PRIMARY KEY,
+    created_at REAL NOT NULL,
+    description TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    sample_size INTEGER NOT NULL DEFAULT 0,
+    accuracy_rate REAL NOT NULL DEFAULT 0.0,
+    false_positive_rate REAL NOT NULL DEFAULT 0.0,
+    simulated_net_return_pct REAL NOT NULL DEFAULT 0.0,
+    max_drawdown_pct REAL NOT NULL DEFAULT 0.0,
+    benchmark_comparison_json TEXT
+);
+
+-- Live Trading: Trade proposals
+CREATE TABLE IF NOT EXISTS live_proposals (
+    proposal_id TEXT PRIMARY KEY,
+    token_mint TEXT NOT NULL,
+    token_symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    wallet_address TEXT NOT NULL,
+    input_amount_sol REAL NOT NULL,
+    expected_output_tokens REAL NOT NULL,
+    min_output_tokens REAL NOT NULL,
+    estimated_fee_sol REAL NOT NULL,
+    slippage_bps REAL NOT NULL,
+    quote_json TEXT NOT NULL,
+    unsigned_tx_base64 TEXT NOT NULL,
+    status TEXT NOT NULL,
+    rejection_reason TEXT,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_live_proposals_wallet ON live_proposals(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_live_proposals_status ON live_proposals(status);
+
+-- Live Trading: Broadcast transactions tracking
+CREATE TABLE IF NOT EXISTS live_transactions (
+    tx_signature TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL,
+    wallet_address TEXT NOT NULL,
+    token_mint TEXT NOT NULL,
+    side TEXT NOT NULL,
+    amount_sol REAL NOT NULL,
+    amount_tokens REAL NOT NULL,
+    slot INTEGER,
+    block_time REAL,
+    status TEXT NOT NULL,
+    confirmation_commitment TEXT NOT NULL,
+    error_message TEXT,
+    fee_paid_sol REAL,
+    submitted_at REAL NOT NULL,
+    confirmed_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_live_tx_wallet ON live_transactions(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_live_tx_status ON live_transactions(status);
+
+-- Independent Risk Audit Log
+CREATE TABLE IF NOT EXISTS risk_audit_log (
+    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_id TEXT,
+    check_name TEXT NOT NULL,
+    passed INTEGER NOT NULL,
+    threshold_val TEXT,
+    observed_val TEXT,
+    timestamp REAL NOT NULL,
+    details_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_risk_audit_prop ON risk_audit_log(proposal_id);
+"""

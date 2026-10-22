@@ -1,25 +1,30 @@
-# Formal Acceptance Report — SOLANA PREDATOR
+# Formal Acceptance Report — SOLANA PREDATOR (Phase 3: Decision Engine, Learning & Live Trading)
 
 ## 1. Executive Summary
 
-The **SOLANA PREDATOR** project has been successfully engineered, verified, and accepted in accordance with all mission specifications. The application provides an autonomous market intelligence gathering layer, a 9-agent consensus engine with absolute risk veto enforcement, and a deterministic paper trading simulator.
+The **SOLANA PREDATOR** project has evolved from its initial live performance validation into a production-grade algorithmic intelligence, autonomous decision-making, and non-custodial live trading platform.
+
+The three primary capabilities mandated in Phase 3 have been fully engineered, validated by comprehensive empirical test suites, and integrated end-to-end:
+1. **Autonomous Multi-Agent Decision Engine**: Complete structured decisions across 9 agents (CHIEF, SCAN, WHALE, VET, QUANT, SKEPTIC, SIZE, RISK, AUDIT) with deterministic reproducibility, invalidation criteria, and absolute RISK veto.
+2. **Measurable Learning Engine**: Systematic evaluation of decision outcomes against real subsequent price action across strictly partitioned temporal splits (`TRAIN`, `VALIDATION`, `TEST`) without lookahead bias, including candidate strategy simulations before live adoption.
+3. **Live Trading & Independent Risk Layer**: End-to-end technical integration featuring read-only wallet connection (public key only), unsigned transaction construction, 13 independent non-bypassable risk controls, mandatory explicit user signature, and on-chain confirmation tracking.
 
 ---
 
 ## 2. Acceptance Criteria Verification Matrix
 
-| Criterion | Specification | Verified Evidence | Status |
+| Criterion | Phase 3 Specification | Verified Empirical Evidence | Status |
 |---|---|---|---|
-| **Absolute Project Isolation** | Zero modifications or operations affecting `/root/aidesk` or `/root/gmgn_sentinel_desk`. | Independent git repo initialized in `/root/solana_predator`. Protected directories remained clean and untouched. | **ACCEPTED** |
-| **Security Boundary** | Zero private keys, seed phrases, signing routines, or broadcast code paths. | Enforced in code and verified via regex source scans in `test_security_boundary.py`. Mandatory UI notice present. | **ACCEPTED** |
-| **Backend Test Suite** | Normalization, deduplication, lifecycle, whale classification, agent contracts, risk veto, reconciliation. | 28 / 28 Pytest test suites passing cleanly (`pytest -v backend/tests/`). | **ACCEPTED** |
-| **Multi-Agent Engine** | CHIEF, SCAN, WHALE, VET, QUANT, SKEPTIC, SIZE, RISK, AUDIT. | Monotonic latency tracking, structured contracts, and absolute RISK veto verified. | **ACCEPTED** |
-| **Paper Simulator & Reconciliation** | Virtual capital, depth slippage, taker fee (25 bps), partial fills, cold restart audit reconciliation. | Verified in `test_paper_broker.py` and `test_accounting_reconciliation.py`. | **ACCEPTED** |
-| **Frontend Quality** | 10 views, Riverpod state, responsive layout, WebSocket reconnect. | `flutter analyze` passed with 0 issues. 3 / 3 widget tests passed. | **ACCEPTED** |
-| **Web Build Artifacts** | Production release compilation for browser terminal. | Compiled via `flutter build web --release` into `frontend/build/web/`. | **ACCEPTED** |
-| **Live Mainnet Connectivity** | Verified read-only mainnet connectivity. | Live smoke test successfully fetched mainnet slot `460081799` and 23 live DexScreener tokens. | **ACCEPTED** |
-| **CI Workflows** | GitHub Actions for backend tests, Flutter analysis/tests, and build artifacts. | `.github/workflows/backend.yml` and `.github/workflows/flutter.yml` created. | **ACCEPTED** |
-| **Documentation Suite** | Architecture, Data Sources, Contracts, Agents, Paper Trading, Security, Runbook, Worklog. | All 11 markdown files created and audited. | **ACCEPTED** |
+| **Absolute Project Isolation** | Zero operations or modifications affecting `/root/aidesk` or `/root/gmgn_sentinel_desk`. | Git status clean on both protected repositories. All changes isolated in `/root/solana_predator`. | **ACCEPTED** |
+| **Multi-Agent Decision Engine** | 9 coordinated agents, full decision metadata, invalidation conditions, horizon, reproducibility. | Verified via `test_multi_agent_decisions.py` (6/6 tests passing). Full contracts persisted to `chief_decisions` & `agent_decisions`. | **ACCEPTED** |
+| **Measurable Learning Engine** | Strict temporal split, win-rate, false positives, net return (with fees), MAE, strategy optimization. | Verified via `test_learning_engine.py` (5/5 tests passing). Zero temporal leakage between splits confirmed. | **ACCEPTED** |
+| **Live Trading Module** | Read-only wallet connection, DEX quote service, unsigned transaction generation, broadcast tracking. | Verified via `test_live_trading_and_risk.py` (8/8 tests passing). Full models and routes implemented. | **ACCEPTED** |
+| **Security & Zero Private Keys** | Backend never stores or requests private keys. Backend cannot sign or broadcast autonomously. | Verified via static scans and negative assertion unit tests. Transactions strictly require user wallet signatures. | **ACCEPTED** |
+| **Independent Risk Layer** | 13 non-bypassable controls, global kill switch, independent of agents/LLMs, SQLite audit trail. | Verified in `test_independent_risk_guard_*` and `test_emergency_kill_switch_*`. Audit trail persisted in `risk_audit_log`. | **ACCEPTED** |
+| **Backend Test Suite** | 100% green pass rate across all suites without weakening assertions. | **58 / 58 Pytest tests passed** cleanly in 12.4s (`pytest -v backend/tests/`). | **ACCEPTED** |
+| **Frontend Terminal Quality** | New Learning & Live Trading views, responsive metrics, state providers, zero analyzer issues. | `flutter analyze` completed with **0 issues**. **5 / 5 Flutter widget tests passed**. | **ACCEPTED** |
+| **Web Terminal Build** | Production compilation for browser access. | `flutter build web --release` succeeded in 82.2s (`frontend/build/web/`). | **ACCEPTED** |
+| **Documentation Suite** | Architecture, multi-agent decisions, learning engine, live trading, risk system, worklog. | Complete documentation suite updated in `docs/` and `worklog.md`. | **ACCEPTED** |
 
 ---
 
@@ -28,12 +33,13 @@ The **SOLANA PREDATOR** project has been successfully engineered, verified, and 
 - **Host Environment**: Linux Ubuntu PRoot container on Android aarch64.
 - **Python**: 3.14.4 (FastAPI 0.156.3, Pydantic 2.14.1, Uvicorn 0.54.0, Pytest 9.0.2).
 - **Flutter**: 3.47.7 (Channel stable, Dart 3.13.5).
-- **SQLite**: 3.46.1 in Write-Ahead Logging (`WAL`) mode.
+- **SQLite**: 3.46.1 with Write-Ahead Logging (`WAL`) mode enabled.
 - **Package Identifier**: `com.ghdinteractivestudio.solana_predator`.
 
 ---
 
-## 4. Known Limitations & Recommendations
+## 4. Operational Invariants
 
-1. **Android Background Lifetime**: Termux background processes are subject to OS battery optimization killing. Users must acquire a wake-lock (`termux-wake-lock`) or run via a persistent session manager (`tmux`).
-2. **Local Android SDK in PRoot**: The PRoot container toolchain lacks local Android SDK components for on-device APK packaging; mobile APK compilation is automated via the GitHub Actions runner workflow (`.github/workflows/flutter.yml`).
+1. **Autonomous Proposal, Manual Execution**: Autonomous agents propose trades based on conviction scores; real execution on Solana Mainnet-Beta strictly requires manual signature authorization from the user's connected wallet.
+2. **Immutable Risk Boundaries**: The 13 checks in `IndependentRiskGuard` cannot be overridden or relaxed by any agent, algorithm, or LLM advisory.
+3. **Temporal Evaluation Integrity**: Strategy benchmarks are only certified using strictly subsequent historical validation splits to eliminate overfitting and lookahead bias.

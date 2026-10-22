@@ -99,6 +99,12 @@ class AgentOrchestrator:
             except Exception as e:
                 logger.error("Failed to persist agent decision for %s: %s", ag_name, e)
 
+        # 6. Persist structured chief consensus record
+        try:
+            await self.repository.save_chief_decision(consensus)
+        except Exception as e:
+            logger.error("Failed to persist chief decision: %s", e)
+
         return consensus
 
     async def _call_optional_llm(self, event: NormalizedMarketEvent) -> None:
