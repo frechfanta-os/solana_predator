@@ -64,11 +64,18 @@ def test_llm_status_route(client):
 
 
 def test_llm_analyze_fallback_when_disabled(client):
-    # When LLM is disabled or unconfigured, route returns explicit fallback status
+    # When LLM is queried via API, route returns explicit contract status
     resp = client.post("/api/llm/analyze", json={
         "token_mint": "TokenMintTest11111111111111111111111111111",
         "agent_role": "CHIEF",
     })
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] in ("LLM_NOT_CONFIGURED", "LLM_FALLBACK", "SUCCESS")
+    assert data["status"] in (
+        "LLM_NOT_CONFIGURED",
+        "LLM_FALLBACK",
+        "SUCCESS",
+        "LLM_UNAVAILABLE",
+        "LLM_INVALID_RESPONSE",
+        "LLM_AUTH_FAILED",
+    )

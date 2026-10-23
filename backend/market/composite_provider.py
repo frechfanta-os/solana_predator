@@ -7,6 +7,7 @@ from backend.market.base import BaseMarketDataProvider
 from backend.market.dex_screener_provider import DexScreenerProvider
 from backend.market.solana_rpc_provider import SolanaRpcProvider
 from backend.market.gmgn_provider import GmgnMarketProvider
+from backend.market.mobula_provider import MobulaMarketProvider
 from backend.models.events import NormalizedMarketEvent, MarketSource, EventQuality
 from backend.config import settings
 
@@ -18,13 +19,14 @@ class CompositeMarketDataProvider(BaseMarketDataProvider):
     
     Priority Hierarchy:
     1. GMGN (Optional rich on-chain analytics, used if configured and available)
-    2. DEX Screener (Always-available primary pricing and pool liquidity source)
-    3. Solana RPC (Always-available on-chain slot, blockhash, and signatures truth)
+    2. Mobula (Optional multi-chain intelligence & distribution stats, used if configured and available)
+    3. DEX Screener (Always-available primary pricing and pool liquidity source)
+    4. Solana RPC (Always-available on-chain slot, blockhash, and signatures truth)
     
     INVARIANTS:
     - Never fabricates or interpolates missing prices, volumes, or liquidity.
     - Explicitly tags observation state: GENUINELY_OBSERVED, STALE, or MISSING.
-    - If GMGN is absent/restricted, the pipeline operates without interruption.
+    - If GMGN or Mobula is absent/restricted (e.g. Free plan 403), the pipeline operates without interruption.
     """
 
     def __init__(
@@ -32,12 +34,15 @@ class CompositeMarketDataProvider(BaseMarketDataProvider):
         dex_screener: Optional[DexScreenerProvider] = None,
         solana_rpc: Optional[SolanaRpcProvider] = None,
         gmgn: Optional[GmgnMarketProvider] = None,
+        mobula: Optional[MobulaMarketProvider] = None,
     ):
         self.dex_screener = dex_screener or DexScreenerProvider()
         self.solana_rpc = solana_rpc or SolanaRpcProvider()
         self.gmgn = gmgn or GmgnMarketProvider()
+        self.mobula = mobula or MobulaMarketProvider()
         self._providers: List[BaseMarketDataProvider] = [
             self.gmgn,
+            self.mobula,
             self.dex_screener,
             self.solana_rpc,
         ]
@@ -51,6 +56,8 @@ class CompositeMarketDataProvider(BaseMarketDataProvider):
         # Reflects active primary source
         if self.gmgn.is_available:
             return MarketSource.GMGN
+        if self.mobula.is_available:
+            return MarketSource.MOBULA
         return MarketSource.DEX_SCREENER
 
     @property
@@ -79,11 +86,26 @@ class CompositeMarketDataProvider(BaseMarketDataProvider):
                 fallback_trail.append("gmgn_no_market_data")
             except Exception as e:
                 fallback_trail.append(f"gmgn_error_{type(e).__name__}")
-                logger.warning("GMGN provider lookup failed (%s). Falling back to DEX Screener.", e)
+                logger.warning("GMGN provider lookup failed (%s). Falling back.", e)
         else:
             fallback_trail.append("gmgn_unconfigured_or_unavailable")
 
-        # 2. Fallback to DEX Screener (Standard primary source for price/liquidity)
+        # 2. Try Mobula if configured and operational
+        if self.mobula.is_configured and self.mobula.is_available:
+            try:
+                event = await self.mobula.get_token_market_data(token_mint)
+                if event and (event.price_usd is not None or event.liquidity_usd is not None):
+                    event.metadata["fallback_path"] = fallback_trail + ["mobula"]
+                    event.metadata["provider_resolved"] = self.mobula.name
+                    return event
+                fallback_trail.append("mobula_no_market_data")
+            except Exception as e:
+                fallback_trail.append(f"mobula_error_{type(e).__name__}")
+                logger.warning("Mobula provider lookup failed (%s). Falling back.", e)
+        else:
+            fallback_trail.append("mobula_unconfigured_or_unavailable")
+
+        # 3. Fallback to DEX Screener (Standard primary source for price/liquidity)
         if self.dex_screener.is_available:
             try:
                 event = await self.dex_screener.get_token_market_data(token_mint)
@@ -101,7 +123,7 @@ class CompositeMarketDataProvider(BaseMarketDataProvider):
         else:
             fallback_trail.append("dex_screener_unavailable")
 
-        # 3. Fallback to Solana RPC (On-chain truth for slot/signatures without faking prices)
+        # 4. Fallback to Solana RPC (On-chain truth for slot/signatures without faking prices)
         if self.solana_rpc.is_available:
             try:
                 event = await self.solana_rpc.get_token_market_data(token_mint)
@@ -124,6 +146,14 @@ class CompositeMarketDataProvider(BaseMarketDataProvider):
             except Exception:
                 pass
 
+        if self.mobula.is_configured and self.mobula.is_available:
+            try:
+                events = await self.mobula.get_token_pairs(token_addresses)
+                if events:
+                    return events
+            except Exception:
+                pass
+
         # Fallback to DEX Screener batching
         if self.dex_screener.is_available:
             return await self.dex_screener.get_token_pairs(token_addresses)
@@ -134,12 +164,15 @@ class CompositeMarketDataProvider(BaseMarketDataProvider):
     async def check_health(self) -> Dict[str, Any]:
         """Aggregate health metrics of all underlying market data providers."""
         gmgn_health = await self.gmgn.check_health()
+        mobula_health = await self.mobula.check_health()
         dex_health = await self.dex_screener.check_health()
         rpc_health = await self.solana_rpc.check_health()
 
         active_primary = "dex_screener"
         if self.gmgn.is_available:
             active_primary = "gmgn"
+        elif self.mobula.is_available:
+            active_primary = "mobula"
 
         return {
             "name": self.name,
@@ -147,6 +180,7 @@ class CompositeMarketDataProvider(BaseMarketDataProvider):
             "active_primary_provider": active_primary,
             "providers": {
                 "gmgn": gmgn_health,
+                "mobula": mobula_health,
                 "dex_screener": dex_health,
                 "solana_rpc": rpc_health,
             },

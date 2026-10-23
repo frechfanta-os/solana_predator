@@ -9,6 +9,7 @@ class MarketSource(str, Enum):
     SOLANA_RPC = "SOLANA_RPC"
     DEX_SCREENER = "DEX_SCREENER"
     GMGN = "GMGN"
+    MOBULA = "MOBULA"
     REPLAY = "REPLAY"
     SYNTHETIC = "SYNTHETIC"
 

@@ -20,6 +20,7 @@ from backend.market.base import BaseMarketDataProvider
 from backend.market.dex_screener_provider import DexScreenerProvider
 from backend.market.solana_rpc_provider import SolanaRpcProvider
 from backend.market.gmgn_provider import GmgnMarketProvider
+from backend.market.mobula_provider import MobulaMarketProvider
 from backend.market.composite_provider import CompositeMarketDataProvider
 from backend.models.events import NormalizedMarketEvent, MarketSource, EventQuality
 
@@ -48,6 +49,7 @@ def test_interface_compliance():
         DexScreenerProvider(),
         SolanaRpcProvider(),
         GmgnMarketProvider(),
+        MobulaMarketProvider(),
         CompositeMarketDataProvider(),
     ]
     for p in providers:
@@ -337,10 +339,12 @@ async def test_provider_health_api_route():
     assert health["status"] == "OPERATIONAL"
     assert health["active_primary_provider"] == "dex_screener"
     assert health["providers"]["gmgn"]["configured"] is False
+    assert health["providers"]["mobula"]["configured"] is False
     assert health["providers"]["dex_screener"]["configured"] is True
     assert health["providers"]["solana_rpc"]["configured"] is True
     assert "last_checked" in health["providers"]["dex_screener"]
     assert "last_checked" in health["providers"]["solana_rpc"]
+    assert "last_checked" in health["providers"]["mobula"]
 
 
 # 11. Strict Staleness Invariant: Old Observation Does NOT Become Fresh on Arrival
@@ -577,17 +581,156 @@ async def test_paper_trading_continuity_under_provider_fallback():
     assert updated_pos.current_price_usd == 1.15
     assert updated_pos.unrealized_pnl_usd == pytest.approx(15.0, abs=0.01)
     assert updated_pos.unrealized_pnl_pct == pytest.approx(15.0, abs=0.01)
+
+
+# 18. Mobula Unconfigured Safe State
+@pytest.mark.asyncio
+async def test_mobula_unconfigured_safe_state():
+    mobula = MobulaMarketProvider(api_key="", enabled=False)
+    assert mobula.is_configured is False
+    assert mobula.is_available is False
+    # Calling unconfigured provider returns None without any network request
+    res = await mobula.get_token_market_data("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+    assert res is None
+    health = await mobula.check_health()
+    assert health["configured"] is False
+    assert health["available"] is False
+    assert health["reason"] == "DISABLED_BY_CONFIG"
+
+
+# 19. Mobula Free Plan 403 Restriction Handling
+@pytest.mark.asyncio
+async def test_mobula_free_plan_403_restriction_handling():
+    session_mock = MagicMock()
+    session_mock.closed = False
+    restriction_payload = {
+        "message": "API access is unavailable on the Free plan",
+        "error": "Forbidden",
+        "statusCode": 403,
+    }
+    session_mock.get.return_value = MockAiohttpResponse(403, json.dumps(restriction_payload))
+
+    mobula = MobulaMarketProvider(
+        api_key="test-mobula-restricted-mock-key",
+        enabled=True,
+        session=session_mock,
+    )
+    assert mobula.is_configured is True
+    assert mobula.is_available is True
+
+    # Call should catch 403 and set _auth_restricted without raising
+    res = await mobula.get_token_market_data("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+    assert res is None
+    assert mobula.is_available is False
+    assert mobula._auth_restricted is True
+
+    health = await mobula.check_health()
+    assert "AUTH_OR_PLAN_RESTRICTED" in health["reason"]
+    # Ensure raw secret is not leaked in health reason or fields
+    assert "test-mobula-restricted" not in json.dumps(health)
+
+
+# 20. Mobula Valid Response Parsing Without Metric Fabrication
+@pytest.mark.asyncio
+async def test_mobula_valid_response_parsing_and_no_fabrication():
+    session_mock = MagicMock()
+    session_mock.closed = False
+    now = time.time()
+    mobula_data = {
+        "data": {
+            "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "symbol": "USDC",
+            "name": "USD Coin",
+            "price": "1.0001",
+            "liquidity": "50000000.0",
+            # volume24h is intentionally missing to verify zero-fabrication invariant
+            "volume24h": None,
+            "updated_at": int(now - 2.0),
+        }
+    }
+    session_mock.get.return_value = MockAiohttpResponse(200, json.dumps(mobula_data))
+
+    mobula = MobulaMarketProvider(
+        api_key="test-mobula-valid-key",
+        enabled=True,
+        session=session_mock,
+    )
+
+    ev = await mobula.get_token_market_data("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+    assert ev is not None
+    assert ev.source == MarketSource.MOBULA
+    assert ev.price_usd == 1.0001
+    assert ev.liquidity_usd == 50000000.0
+    # Missing field is NOT fabricated
+    assert ev.volume_24h_usd is None
+    assert "volume_24h_usd" in ev.missing_fields
+    assert ev.observation_state == "GENUINELY_OBSERVED"
+    assert ev.quality == EventQuality.ACCEPTABLE
+
+
+# 21. Composite Fallback: GMGN & Mobula Restricted -> DEX Screener
+@pytest.mark.asyncio
+async def test_composite_fallback_mobula_to_dex_screener():
+    # GMGN disabled
+    gmgn = GmgnMarketProvider(enabled=False)
+
+    # Mobula restricted by 403
+    mobula_session = MagicMock()
+    mobula_session.closed = False
+    mobula_payload = {"message": "API access is unavailable on the Free plan", "statusCode": 403}
+    mobula_session.get.return_value = MockAiohttpResponse(403, json.dumps(mobula_payload))
+    mobula = MobulaMarketProvider(
+        api_key="test-mobula-restricted-mock-key",
+        enabled=True,
+        session=mobula_session,
+    )
+
+    # DEX Screener operational
+    dex_client = MagicMock()
+    dex_client.base_url = "https://api.dexscreener.com"
+    mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    dex_pair = {
+        "chainId": "solana",
+        "pairAddress": "PairUSDC111",
+        "baseToken": {"address": mint, "symbol": "USDC"},
+        "priceUsd": "1.00",
+        "liquidity": {"usd": 120000000.0},
+        "volume": {"h24": 45000000.0},
+        "pairCreatedAt": int((time.time() - 3600) * 1000),
+    }
+    dex_client.get_tokens_pairs = AsyncMock(return_value=[dex_pair])
+    dex_provider = DexScreenerProvider(client=dex_client)
+
+    composite = CompositeMarketDataProvider(
+        gmgn=gmgn,
+        mobula=mobula,
+        dex_screener=dex_provider,
+    )
+
+    event = await composite.get_token_market_data(mint)
     assert event is not None
     assert event.source == MarketSource.DEX_SCREENER
-    assert event.price_usd == 1.15
+    assert event.price_usd == 1.00
+    assert event.liquidity_usd == 120000000.0
+    assert "dex_screener" in event.metadata.get("fallback_path", [])
+    assert event.metadata["provider_resolved"] == "dex_screener"
 
-    # Mark to market with fallback price
-    updated_pos = await pm.mark_to_market(
-        token_mint=event.token_mint,
-        current_price_usd=event.price_usd,
-        freshness_seconds=event.freshness_seconds,
+
+# 22. Mobula Cooldown Expiration Restores Availability for Probing
+@pytest.mark.asyncio
+async def test_mobula_cooldown_expiration_probing():
+    mobula = MobulaMarketProvider(
+        api_key="test-mobula-cooldown-key",
+        enabled=True,
     )
-    assert updated_pos is not None
-    assert updated_pos.current_price_usd == 1.15
-    assert updated_pos.unrealized_pnl_usd == pytest.approx(15.0, abs=0.01)
-    assert updated_pos.unrealized_pnl_pct == pytest.approx(15.0, abs=0.01)
+    assert mobula.is_available is True
+
+    # Simulate restriction
+    mobula._auth_restricted = True
+    mobula._last_failure_timestamp = time.time()
+    assert mobula.is_available is False  # In cooldown
+
+    # Simulate cooldown expiration (> 60s)
+    mobula._last_failure_timestamp = time.time() - 65.0
+    assert mobula.is_available is True  # Allowed to probe again
+

@@ -528,6 +528,57 @@ export LLM_API_KEY="<your_glm_api_key>"
 - **Isolation Mandate**: `/root/aidesk` and `/root/gmgn_sentinel_desk` 100% clean and untouched.
 - **Zero Real Orders**: Paper Trading preserved intact; 0 on-chain transactions executed.
 
+---
+
+## Phase 10: Mobula API Diagnostic & Pluggable Provider Integration (2026-10-23)
+
+### 1. Empirical Diagnosis of User Request
+- **User Input Command**:
+  ```bash
+  curl 'https://api.mobula.io/api/2/token/details?chainId=evm:1&address=0x514910771AF9Ca656af840dff83E8264EcF986CA' \
+    -H 'Authorization: <REDACTED_MOBULA_API_KEY>'
+  ```
+- **Live Empirical Probe Result**:
+  - Returned `HTTP 403 Forbidden` with body:
+    `{"message":"API access is unavailable on the Free plan","error":"Forbidden","statusCode":403}`
+  - Probing with a dummy/invalid key returned `HTTP 401 Unauthorized` (`{"message":"Invalid API key"}`).
+  - **Diagnostic Conclusion**: The user's API key is valid and recognized by Mobula, but their account is on the Free plan, for which Mobula explicitly blocks REST API access via HTTP 403.
+  - Furthermore, `solana_predator` operates on Solana (base58 token mints, `chainId=solana`), not EVM (`chainId=evm:1`).
+
+### 2. Architectural Implementation
+- **Pluggable Mobula Provider** (`backend/market/mobula_provider.py`):
+  - Conforms to `BaseMarketDataProvider` interface.
+  - Automatically targets `chainId=solana` and Solana token mints: `GET /api/2/token/details?chainId=solana&address={token_mint}`.
+  - Gracefully detects HTTP 403 Free plan restriction and 401 invalid key, setting `_auth_restricted = True` and entering a 60s cooldown probe policy (`RESTRICTION_COOLDOWN_SEC = 60.0s`).
+  - Returns `None` cleanly without throwing exceptions or blocking callers.
+  - Bounded LRU cache (1,000 entries, 15s TTL) to prevent duplicate calls.
+  - Concurrency limited via `asyncio.Semaphore(5)`.
+  - Zero data fabrication: missing fields remain `None` and are added to `missing_fields`.
+  - Zero secret leakage in health checks or logs.
+- **Composite Failover Integration** (`backend/market/composite_provider.py`):
+  - Updated prioritized failover chain:
+    `GMGN -> Mobula -> DEX Screener -> Solana RPC`.
+  - When GMGN and Mobula are unconfigured or restricted, the pipeline automatically falls back to DEX Screener (pricing/liquidity) and Solana RPC (on-chain truth) with zero downtime.
+- **Configuration** (`backend/config.py`):
+  - Added `MOBULA_ENABLED` (default `False`), `MOBULA_API_BASE_URL` (`https://api.mobula.io`), `MOBULA_API_KEY`, `MOBULA_TIMEOUT_SECONDS`, `MOBULA_MAX_RETRIES`, `MOBULA_CACHE_TTL_SEC`.
+- **Event Models** (`backend/models/events.py`):
+  - Added `MarketSource.MOBULA = "MOBULA"`.
+
+### 3. Verification & Empirical Results
+- **Unit & Regression Tests** (`backend/tests/test_market_data_fallback.py`):
+  - Expanded from 17 to 22 tests (100% green in 4.46s):
+    - `test_interface_compliance` (now includes Mobula)
+    - `test_mobula_unconfigured_safe_state`
+    - `test_mobula_free_plan_403_restriction_handling`
+    - `test_mobula_valid_response_parsing_and_no_fabrication`
+    - `test_composite_fallback_mobula_to_dex_screener`
+    - `test_mobula_cooldown_expiration_probing`
+- **Backend Test Suite**: **105 / 105 tests passing**.
+- **Frontend Widget Tests**: **5 / 5 tests passing**.
+- **Isolation Mandate**: `/root/aidesk` and `/root/gmgn_sentinel_desk` 100% clean and untouched.
+- **Zero Real Orders**: Paper Trading preserved intact; 0 real Solana transactions executed.
+
+
 
 
 

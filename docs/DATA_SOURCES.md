@@ -42,13 +42,27 @@
 - **Account Balance Restriction**: GMGN currently requires an on-chain account balance of at least 100 USD to generate an active OpenAPI key.
 - **Strict Invariant**: No funds are ever deposited to bypass restrictions. The provider is completely optional (`GMGN_ENABLED=False` by default).
 - **Graceful Fallback & Recalculated Availability**:
-  - If unconfigured, disabled, rate-limited (HTTP 429), or balance-restricted (HTTP 401/403), the adapter returns `None` immediately, allowing seamless and zero-downtime fallback to DEX Screener and Solana RPC.
+  - If unconfigured, disabled, rate-limited (HTTP 429), or balance-restricted (HTTP 401/403), the adapter returns `None` immediately, allowing seamless and zero-downtime fallback to Mobula, DEX Screener and Solana RPC.
   - **Availability Recalculation Policy**: An explicit cooldown probing policy (`RESTRICTION_COOLDOWN_SEC = 60.0s`) avoids permanent terminal disabling. Once cooldown expires, a single probe is permitted; upon success, the provider automatically recovers.
 - **Resilience Features**:
   - Bounded in-memory LRU cache with TTL (`GMGN_CACHE_TTL_SEC = 15.0s`, max 1000 entries) preventing duplicate network requests.
   - Concurrency limiting via `asyncio.Semaphore(5)`.
   - Bounded exponential retries for transient 5xx server errors.
 - **Seamless Re-activation**: GMGN can be re-activated at any time simply by setting `GMGN_ENABLED=true` and `GMGN_API_KEY=...` in local environment variables, with no code or agent modifications required.
+
+### Mobula API Adapter (Optional & Pluggable)
+- **Protocol**: HTTPS REST JSON (`https://api.mobula.io`).
+- **Endpoint**: `/api/2/token/details?chainId=solana&address={token_mint}`.
+- **Free Plan Restriction Handling**:
+  - Empirically verified: Mobula returns `HTTP 403 Forbidden` (`{"message":"API access is unavailable on the Free plan"}`) for accounts without a paid data tier, even with a valid key.
+  - The adapter intercepts HTTP 403 / 401 gracefully, flags `_auth_restricted = True`, sets a 60-second probe cooldown (`RESTRICTION_COOLDOWN_SEC = 60.0s`), and returns `None` immediately.
+  - Never crashes, never halts agents, and instantly triggers fallback to DEX Screener and Solana RPC.
+- **Zero Fabrication**: Fields not returned by Mobula (or unpopulated) remain strictly `None` and are listed in `missing_fields`.
+- **Resilience Features**:
+  - Bounded LRU cache with TTL (`MOBULA_CACHE_TTL_SEC = 15.0s`, max 1000 items).
+  - Concurrency bounding via `asyncio.Semaphore(5)`.
+  - Zero sensitive key leakage in health telemetry and logs.
+- **Seamless Re-activation**: Enabled via `MOBULA_ENABLED=true` and `MOBULA_API_KEY=...` in local environment variables.
 
 ---
 
@@ -73,9 +87,10 @@ class BaseMarketDataProvider(ABC):
 
 ### Providers & Composite Failover
 1. **`GmgnMarketProvider`**: Priority 1 when configured and available; marks itself unavailable upon 401/403 balance restriction or circuit open, with 60s cooldown re-probing.
-2. **`DexScreenerProvider`**: Priority 2 primary source for free, public price, liquidity, volume, and pair quotes.
-3. **`SolanaRpcProvider`**: Priority 3 on-chain fallback for verified slot, blockhash, and transaction activity. Separates on-chain truth from missing market pricing (`observation_state = "MISSING"` for pricing, `metadata["on_chain_observed"] = True`).
-4. **`CompositeMarketDataProvider`**: Orchestrates failover order (`GMGN -> DEX Screener -> Solana RPC`), tracks telemetry, latency, explicit provenance (`event.source`), and traversal history (`fallback_path`).
+2. **`MobulaMarketProvider`**: Priority 2 when configured and available; automatically detects Free plan restrictions (403) and enters cooldown probe mode without failing requests.
+3. **`DexScreenerProvider`**: Priority 3 primary source for free, public price, liquidity, volume, and pair quotes.
+4. **`SolanaRpcProvider`**: Priority 4 on-chain fallback for verified slot, blockhash, and transaction activity. Separates on-chain truth from missing market pricing (`observation_state = "MISSING"` for pricing, `metadata["on_chain_observed"] = True`).
+5. **`CompositeMarketDataProvider`**: Orchestrates failover order (`GMGN -> Mobula -> DEX Screener -> Solana RPC`), tracks telemetry, latency, explicit provenance (`event.source`), and traversal history (`fallback_path`).
 
 ---
 
