@@ -1,50 +1,59 @@
-# Formal Acceptance Report — SOLANA PREDATOR (Phase 6: Multi-Provider Market Architecture: GMGN & Mobula Failover)
+# Rapport d'Acceptation Formelle & Audit de Production — SOLANA PREDATOR
 
-## 1. Executive Summary
+## 1. Synthèse de l'Architecture et État Réel
 
-The **SOLANA PREDATOR** project has evolved from its initial live performance validation into a production-grade algorithmic intelligence, autonomous decision-making, non-custodial live trading, LLM-assisted multi-agent terminal, and pluggable multi-source market data architecture.
+Le projet **SOLANA PREDATOR** (`/root/solana_predator`, branche `main`) est une plateforme d'analyse algorithmique de marché Solana, de prise de décision multi-agents et de simulation **Paper Trading** temps réel, dotée d'un échafaudage de sécurité et de contrôle de risque pour propositions Live non-custodiales.
 
-All five primary architectural pillars have been fully engineered, validated by comprehensive empirical test suites, and integrated end-to-end:
-1. **Autonomous Multi-Agent Decision Engine**: Complete structured decisions across 9 agents (CHIEF, SCAN, WHALE, VET, QUANT, SKEPTIC, SIZE, RISK, AUDIT) with deterministic reproducibility, invalidation criteria, and absolute RISK veto.
-2. **Measurable Learning Engine**: Systematic evaluation of decision outcomes against real subsequent price action across strictly partitioned temporal splits (`TRAIN`, `VALIDATION`, `TEST`) without lookahead bias, including candidate strategy simulations before live adoption.
-3. **Live Trading & Independent Risk Layer**: End-to-end technical integration featuring read-only wallet connection (public key only), unsigned transaction construction, 13 independent non-bypassable risk controls, mandatory explicit user signature, and on-chain confirmation tracking.
-4. **LLM Provider Integration (GLM-5.3-Flash / Multi-Model Pool)**: High-resilience, rate-limited, concurrency-controlled OpenAI Chat Completions compatible client targeting `glm-5.3-flash` and free OpenRouter failover models, with strict secret masking, unalterable deterministic math, and fail-safe degraded fallback mode.
-5. **Pluggable Multi-Source Market Architecture (GMGN & Mobula Adapters)**: Common abstract provider interface (`BaseMarketDataProvider`) with prioritized composite failover (`GMGN -> Mobula -> DEX Screener -> Solana RPC`). Handles both GMGN balance restrictions ($100 requirement) and Mobula Free plan restrictions (HTTP 403 "API access is unavailable on the Free plan") gracefully with 60s cooldown re-probing, LRU caching, and zero data fabrication.
-
----
-
-## 2. Acceptance Criteria Verification Matrix & Diagnostic
-
-| Dimension | Spécification & Preuve Empirique | Catégorie Requise | Statut |
-|---|---|---|---|
-| **Conditions d'accès Mobula & Limitations Réelles** | Documentation et sondes empiriques réelles : l'accès API REST sur `api.mobula.io` est conditionné à un abonnement payant (Start-up minimum $50/mois). Les comptes Free reçoivent systématiquement `HTTP 403 Forbidden` (`{"message":"API access is unavailable on the Free plan"}`). | **Conditions d'accès vérifiées** | **NON OPÉRATIONNEL EN PRODUCTION (EN ATTENTE DE PLAN PAYANT)** |
-| **Désactivation Totale via MOBULA_ENABLED=false** | Vérifié par test unitaire dédié et test réel : `MOBULA_ENABLED=false` garantit `is_configured=False`, `is_available=False` et effectue exactement **0 appel réseau** (session.get jamais invoquée). | **Isolation & Configuration** | ACCEPTED |
-| **Distinction Télémétrique (401, 403, 429, 5xx)** | Les codes d'erreur sont rigoureusement distingués dans `check_health()` : 401/403 (`AUTH_OR_PLAN_RESTRICTED`), 429 (`HTTP 429 Rate limit`), 5xx / circuit ouvert après 3 échecs (`CONSECUTIVE_FAILURES_CIRCUIT_OPEN`). | **Télémétrie d'erreur** | ACCEPTED |
-| **Fallback Réel vers DEX Screener (Live Read-Only)** | Requête réelle de lecture seule exécutée en 1.5s sur `api.dexscreener.com` pour le token USDC : HTTP 200, 30 paires observées, prix réel $0.9987 et liquidité $1.74M. Le composite fallback achemine la cotation sans aucune interruption ni latence. | **Validation Lecture Seule Réelle** | ACCEPTED (100% Empirique) |
-| **Zéro Fabrication de Prix & Gestion Staleness** | Les réponses partielles (prix sans liquidité/volume), données périmées (>30s) et pannes réseau ne génèrent jamais de prix inventés. Les métriques absentes restent strictement `None`, tracées dans `missing_fields` avec état `MISSING` ou `STALE`. | **Intégrité des Données** | ACCEPTED |
-| **Validation Authentification & Format** | Authentification OpenRouter Bearer validée par requête réelle. Diagnostic Mobula authentifié : clé reconnue mais compte sur plan gratuit bloqué par Mobula (HTTP 403). | **Authentification vérifiée** | ACCEPTED |
-| **Fournisseur Marché Optionnel GMGN** | Gestion fail-safe de la restriction de solde GMGN (seuil 100 USD requis pour génération clé). Zéro dépôt de fonds. Fallback immédiat avec cooldown de 60s. | **Architecture Marché Résiliente** | ACCEPTED |
-| **Alternance & Failover Multi-Modèles** | Basculement automatique en cas de 429 (quota dépassé) ou 5xx vers le modèle suivant dans le pool (`poolside/laguna-s-2.1:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, etc.). | **Vérifié par test automatisé & réel** | ACCEPTED |
-| **Complétion Réelle en Production** | Complétion authentifiée réussie via OpenRouter en 14.6s avec génération d'avis structuré complet (`AgentLLMAdvisory` PASS, confidence 0.75, summary, evidence, risks). | **Complétion réelle réussie** | ACCEPTED (100% Empirique) |
-| **Tests Unitaires Fallback Marché (25 tests)** | 25 tests unitaires dédiés (`test_market_data_fallback.py`) couvrant conformité d'interface, GMGN et Mobula 403/401/429/5xx, composite fallback, RPC fallback, zero fabrication, staleness stricte, cache LRU, recalcul de disponibilité, validation REST base58, 400/404/503 et continuité Paper Trading. | **Tests simulés** | ACCEPTED (25/25 passés) |
-| **Absolue Isolation & Sécurité** | `/root/aidesk` et `/root/gmgn_sentinel_desk` 100% propres et intacts. Zéro clé privée, aucune fuite de secret dans la télémétrie, aucune transaction on-chain permise ou diffusée. | **Sécurité & Isolation** | ACCEPTED |
-| **Suite Globale Backend (108 tests)** | 108 / 108 tests Pytest validés avec succès sans affaiblissement d'assertions. | **Tests automatisés** | ACCEPTED (108/108 green) |
-| **Frontend Flutter Terminal (5 tests)** | `flutter analyze` 0 issue, 5 / 5 tests de widgets réussis. | **Tests automatisés** | ACCEPTED (5/5 green) |
+Conformément à l'Audit Final de Production et de Cohérence, chaque composant est classé selon cinq catégories strictes :
+- **Opérationnel et testé**
+- **Implémenté mais non validé**
+- **Désactivé ou soumis à restriction**
+- **Non implémenté**
+- **Non testé**
 
 ---
 
-## 3. Toolchain & Runtime Environment
+## 2. Matrice d'Classification et de Vérification par Composant
 
-- **Host Environment**: Linux Ubuntu PRoot container on Android aarch64.
-- **Python**: 3.14.4 (FastAPI 0.156.3, Pydantic 2.14.1, Uvicorn 0.54.0, Pytest 9.0.2).
-- **Flutter**: 3.47.7 (Channel stable, Dart 3.13.5).
-- **SQLite**: 3.46.1 with Write-Ahead Logging (`WAL`) mode enabled.
-- **Package Identifier**: `com.ghdinteractivestudio.solana_predator`.
+| Composant / Sous-système | État Réel Observé & Preuve Empirique | Catégorie Officielle |
+|---|---|---|
+| **Moteur Paper Trading (`backend/paper/`)** | Simulation déterministe (frais 0.25 %, slippage dynamique lié à la liquidité), réconciliation comptable en partie double au centime près, gel de valorisation sur données périmées (> 30s), sortie d'urgence basse liquidité (< 2 000 $), persistance SQLite WAL et restauration après redémarrage. | **Opérationnel et testé** |
+| **Système Multi-Agents IA (9 Agents : `SCAN`, `WHALE`, `VET`, `QUANT`, `SKEPTIC`, `SIZE`, `RISK`, `CHIEF`, `AUDIT`)** | Exécution déterministe reproductible, détection d'anomalies `SKEPTIC` (honeypot 0 vente), droit de **VETO absolu** de `RISK` évalué en priorité et impossible à contourner par le LLM ou les autres agents, persistance SQLite (`chief_decisions`). | **Opérationnel et testé** |
+| **Moteur d'Apprentissage Mesurable (`backend/learning/`)** | Partitionnement chronologique strict sans biais d'anticipation (`TRAIN` 60 % / `VALIDATION` 20 % / `TEST` 20 %), évaluation hors-échantillon (`DecisionOutcomeEvaluator`) et simulation de stratégies candidates sans modifier les règles actives. | **Opérationnel et testé** |
+| **Fournisseurs de Marché : DEX Screener & Solana RPC** | `DexScreenerProvider` opérationnel en lecture seule (cotations USD, liquidité, volume, distinction `GENUINELY_OBSERVED` / `STALE` > 30s / `MISSING`, zéro fabrication de prix). `SolanaRpcProvider` opérationnel en lecture seule pour la vérité on-chain (`slot`, `blockTime`, signatures) sans inventer de prix USD (`observation_state="MISSING"`, `on_chain_observed=True`). | **Opérationnel et testé** |
+| **Fournisseur Composite (`CompositeMarketDataProvider`)** | Chaîne de repli priorisée `GMGN -> Mobula -> DEX Screener -> Solana RPC` avec préservation de la provenance (`provider_resolved`, `fallback_path`), cache LRU borné et télémétrie de santé granulaire (401, 403, 429, 5xx). | **Opérationnel et testé** |
+| **Fournisseur Optionnel GMGN (`GmgnMarketProvider`)** | Adaptateur implémenté et testé par mocks. Désactivé par défaut (`GMGN_ENABLED=false`). Compte soumis à la restriction GMGN exigeant un solde $\ge 100\text{ USD}$ pour générer une clé API. Aucun dépôt effectué, aucun contournement tenté. Cooldown de réévaluation de 60s. | **Désactivé ou soumis à restriction** |
+| **Fournisseur Optionnel Mobula (`MobulaMarketProvider`)** | Adaptateur implémenté et testé (`chainId=solana`). Désactivé par défaut (`MOBULA_ENABLED=false`, 0 appel réseau). L'API REST `api.mobula.io` retourne `HTTP 403 Forbidden` (`"API access is unavailable on the Free plan"`) tant qu'un abonnement payant (Start-up 50 $/mois min.) n'est pas souscrit. | **Désactivé ou soumis à restriction** |
+| **Client LLM & Pool Multi-Modèles (`backend/llm/`)** | Client résilient avec masquage des secrets, sémaphore de concurrence, rotation sur pool de modèles gratuits OpenRouter en cas de 429/5xx, et mode dégradé déterministe sans interruption. Désactivé par défaut dans `.env.example` (`LLM_ENABLED=false`). | **Opérationnel et testé** |
+| **Contrôle de Risque Serveur (`IndependentRiskGuard`) & Kill-Switch Persistant** | 13 contrôles serveur non contournables évalués à la création de proposition, ré-vérification du kill-switch à la soumission de signature (`submit_user_signature`), et **persistance SQLite WAL (`system_config` Schema V3)** restaurée automatiquement au démarrage du serveur. | **Opérationnel et testé** |
+| **Échafaudage Live Trading (`backend/live/` & `LiveTradingView`)** | `WalletService` (lecture seule par clé publique base58, zéro clé privée, retour `0` lamport sur erreur RPC sans solde fictif), `LiveOrderManager` et `LiveBroadcastService` (bloqué par `ALLOW_TRANSACTION_SUBMISSION=False`, n'exécutant aucun appel RPC `sendTransaction` en mode dry-run). | **Opérationnel et testé (en mode Dry-Run / Garde-fous)** |
+| **Routage Jupiter v6 Réel & Construction Wire Transaction Signable (`quote_service.py`, `tx_builder.py`)** | `LiveQuoteService` utilise actuellement une formule locale à produit constant et `UnsignedTransactionBuilder` construit un layout binaire structurel de test plutôt qu'une transaction Jupiter v6 sérialisée pour Mainnet. | **Implémenté mais non validé (Simulation locale)** |
+| **Pont Wallet Web3 Natif dans Flutter (`LiveTradingView`)** | L'interface affiche les propositions et les 13 contrôles de risque, mais le bouton de signature soumet un payload de test (`mockSignedBase64`) au lieu d'invoquer un adaptateur Phantom / Solflare Mobile Wallet Adapter. | **Non implémenté (Mock UI de test)** |
+| **Diffusion Réelle de Transactions sur Solana Mainnet** | Strictement interdite et verrouillée par `ALLOW_TRANSACTION_SUBMISSION=False`. Aucune transaction réelle n'a été signée ni diffusée. | **Désactivé ou soumis à restriction (Verrouillage de sécurité)** |
 
 ---
 
-## 4. Operational Invariants
+## 3. Corrections de Sécurité et de Cohérence Appliquées lors de l'Audit Final
 
-1. **Autonomous Proposal, Manual Execution**: Autonomous agents propose trades based on conviction scores; real execution on Solana Mainnet-Beta strictly requires manual signature authorization from the user's connected wallet.
-2. **Immutable Risk Boundaries**: The 13 checks in `IndependentRiskGuard` cannot be overridden or relaxed by any agent, algorithm, or LLM advisory.
-3. **Temporal Evaluation Integrity**: Strategy benchmarks are only certified using strictly subsequent historical validation splits to eliminate overfitting and lookahead bias.
+1. **Persistance du Kill-Switch à travers les redémarrages (`Schema V3`)** :
+   - Ajout de la table `system_config` dans [`backend/database/schema.py`](file:///root/solana_predator/backend/database/schema.py) et migration automatique vers `CURRENT_SCHEMA_VERSION = 3` dans [`backend/database/migrations.py`](file:///root/solana_predator/backend/database/migrations.py).
+   - Persistance immédiate lors de l'appel à `POST /api/live/kill-switch` et restauration automatique au démarrage dans [`backend/main.py`](file:///root/solana_predator/backend/main.py).
+2. **Double vérification du Kill-Switch avant diffusion (`LiveOrderManager.submit_user_signature`)** :
+   - Ajout d'un contrôle serveur impératif dans [`backend/live/order_manager.py`](file:///root/solana_predator/backend/live/order_manager.py) bloquant toute signature soumise si le kill-switch a été activé pendant la fenêtre de validité de 15 secondes de la proposition.
+3. **Verrouillage strict de `sendTransaction` lorsque `ALLOW_TRANSACTION_SUBMISSION=False`** :
+   - Dans [`backend/live/broadcast_service.py`](file:///root/solana_predator/backend/live/broadcast_service.py), l'appel RPC `sendTransaction` n'est plus jamais invoqué tant que `settings.ALLOW_TRANSACTION_SUBMISSION` est `False` (simulation déterministe de confirmation locale uniquement).
+4. **Élimination du solde fictif de repli dans `WalletService._fetch_sol_balance`** :
+   - Dans [`backend/live/wallet.py`](file:///root/solana_predator/backend/live/wallet.py), suppression du fallback `1_500_000_000` lamports (1.5 SOL) en cas d'erreur RPC. En l'absence de réponse RPC valide, le solde retourné est strictement `0` lamport, garantissant que le contrôle de risque #7 (`SOL_BALANCE_AND_RENT_RESERVE`) bloque toute proposition sur donnée manquante.
+5. **Alignement complet de la documentation (`README.md`, `ACCEPTANCE_REPORT.md`, `worklog.md`)** :
+   - Résolution de la contradiction entre le README initial et l'existence de `backend/live/`, documentation exhaustive des 30 endpoints REST + WebSocket `/ws/live` et classification exacte de chaque module.
+
+---
+
+## 4. Résultats Empiriques des Suites de Tests
+
+- **Tests Automatisés Backend (`pytest backend/tests/ -v`)** : **111 / 111 tests réussis (100 % vert)**, incluant les nouveaux tests de persistance du kill-switch après redémarrage, d'authentification admin sur `/api/live/kill-switch`, de blocage de signature sous kill-switch actif, d'absence de solde SOL inventé sur panne RPC et de zéro appel `sendTransaction` lorsque `ALLOW_TRANSACTION_SUBMISSION=False`.
+- **Analyse Statique Frontend (`flutter analyze`)** : **0 erreur, 0 avertissement**.
+- **Tests de Widgets Frontend (`flutter test`)** : **5 / 5 tests réussis (100 % vert)**.
+- **Isolation et Sécurité Git** :
+  - `/root/aidesk` et `/root/gmgn_sentinel_desk` : **100 % intacts et non modifiés**.
+  - Historique Git complet vérifié : **0 clé API, 0 clé privée, 0 secret commité**.

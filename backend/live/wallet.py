@@ -59,14 +59,14 @@ class WalletService:
         return self._current_wallet
 
     async def _fetch_sol_balance(self, public_key: str) -> int:
-        """Query getBalance via read-only Solana RPC."""
+        """Query getBalance via read-only Solana RPC. Returns 0 if unobservable to prevent balance fabrication."""
         try:
             res = await self.rpc_client.call_rpc("getBalance", [public_key, {"commitment": "confirmed"}])
             if res and isinstance(res, dict) and "value" in res:
                 return int(res["value"])
-            return 1_500_000_000  # Default 1.5 SOL for testing or fallback
+            return 0
         except Exception:
-            return 1_500_000_000
+            return 0
 
     async def _fetch_token_accounts(self, public_key: str) -> List[TokenAccountBalance]:
         """Query getTokenAccountsByOwner via read-only Solana RPC."""

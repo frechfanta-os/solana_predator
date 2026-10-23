@@ -481,9 +481,11 @@ async def toggle_emergency_kill_switch(
     req: KillSwitchRequest,
     admin_ok: bool = Depends(require_admin_auth),
     risk_guard: Any = Depends(get_risk_guard),
+    repo: Repository = Depends(get_repo),
 ):
-    """Admin-only Emergency Kill-Switch stopping all live trade proposals."""
+    """Admin-only Emergency Kill-Switch stopping all live trade proposals with SQLite persistence."""
     risk_guard.set_emergency_kill_switch(req.active)
+    await repo.set_system_config("emergency_kill_switch", "true" if req.active else "false")
     return {
         "emergency_kill_switch_active": risk_guard.emergency_kill_switch_active,
         "status": "KILL_SWITCH_ENGAGED" if req.active else "KILL_SWITCH_DISENGAGED",

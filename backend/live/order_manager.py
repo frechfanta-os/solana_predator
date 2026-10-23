@@ -122,6 +122,9 @@ class LiveOrderManager:
         signed_tx_base64: str,
     ) -> LiveTransactionRecord:
         """Receive explicitly signed transaction from user wallet and broadcast to Solana network."""
+        if self.risk_guard.emergency_kill_switch_active:
+            raise ValueError("Emergency kill-switch is active. Broadcast blocked.")
+
         proposals = await self.repository.get_live_proposals(limit=10, status=LiveProposalStatus.PENDING_USER_SIGNATURE.value)
         target = next((p for p in proposals if p["proposal_id"] == proposal_id), None)
         if not target:

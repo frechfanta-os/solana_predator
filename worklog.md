@@ -625,9 +625,36 @@ export LLM_API_KEY="<your_glm_api_key>"
 - **Repository Isolation**: `/root/aidesk` and `/root/gmgn_sentinel_desk` preserved 100% untouched and clean.
 - **Security**: Zero secrets in Git or telemetry, 0 on-chain transactions executed.
 
+---
 
+## Phase 12: Final Production & Consistency Audit (2026-10-23)
 
+### 1. Scope & Initial State
+- **Starting Commit**: `8d21ec7` on branch `main`.
+- **Protected Repositories Verified**: `/root/aidesk` and `/root/gmgn_sentinel_desk` confirmed 100% clean and untouched.
+- **Git History Secret Audit**: Scanned entire commit log (`git log --all -S`); verified zero API keys or private keys ever committed to Git history.
 
+### 2. Contradictions & Defects Identified and Resolved
+1. **Kill-Switch Persistence Across Server Restarts (`Schema V3`)**:
+   - *Finding*: `IndependentRiskGuard.emergency_kill_switch_active` was only stored in RAM and reset to `False` on restart.
+   - *Fix*: Added `SCHEMA_V3` (`system_config` table) in `backend/database/schema.py`, bumped `CURRENT_SCHEMA_VERSION = 3` in `backend/database/migrations.py`, added `get_system_config()` / `set_system_config()` in `backend/database/repository.py`, persisted kill-switch state in `POST /api/live/kill-switch` (`backend/api/routes.py`), and restored it on startup in `backend/main.py`.
+2. **Server-Side Kill-Switch Re-check on Signature Submission**:
+   - *Finding*: `LiveOrderManager.submit_user_signature()` did not re-check `emergency_kill_switch_active` if the kill-switch was engaged after proposal creation during the 15s signing window.
+   - *Fix*: Enforced `if self.risk_guard.emergency_kill_switch_active: raise ValueError(...)` at the entry of `submit_user_signature()` in `backend/live/order_manager.py`.
+3. **Strict Gating of RPC `sendTransaction` Behind `ALLOW_TRANSACTION_SUBMISSION`**:
+   - *Finding*: `LiveBroadcastService.broadcast_signed_transaction()` called `rpc_client.call_rpc("sendTransaction", ...)` even when `settings.ALLOW_TRANSACTION_SUBMISSION` was `False`.
+   - *Fix*: Gated `call_rpc("sendTransaction", ...)` strictly behind `if settings.ALLOW_TRANSACTION_SUBMISSION:` in `backend/live/broadcast_service.py`.
+4. **Removal of Fabricated Fallback SOL Balance in `WalletService`**:
+   - *Finding*: `WalletService._fetch_sol_balance()` returned `1_500_000_000` lamports (1.5 SOL) on RPC error, violating the zero-fabrication rule and potentially bypassing Risk Check #7 (`SOL_BALANCE_AND_RENT_RESERVE`).
+   - *Fix*: Changed fallback on RPC failure or missing value to `0` lamports in `backend/live/wallet.py`.
+5. **Documentation & Operational Classification Alignment**:
+   - *Finding*: `README.md` claimed Paper Trading only and zero broadcast modules, contradicting `backend/live/`. Furthermore, `LiveQuoteService`, `UnsignedTransactionBuilder`, and Flutter's `LiveTradingView` signing button use local simulation/mock payloads rather than live Jupiter v6 transactions and a native Web3 wallet bridge.
+   - *Fix*: Updated `README.md` and `docs/ACCEPTANCE_REPORT.md` to document all 30 REST endpoints + `/ws/live` and classify every module across the 5 required status levels.
 
+### 3. Final Verification Results
+- **Backend Test Suite (`python3 -m pytest backend/tests/ -v`)**: **111 / 111 passed (100% green)** (+3 new security & persistence tests).
+- **Frontend Static Analysis (`flutter analyze`)**: **0 issues found**.
+- **Frontend Widget Tests (`flutter test`)**: **5 / 5 passed (100% green)**.
+- **Protected Repositories**: `/root/aidesk` and `/root/gmgn_sentinel_desk` verified clean and untouched.
 
 

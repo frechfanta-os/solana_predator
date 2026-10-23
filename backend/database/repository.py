@@ -990,3 +990,37 @@ class Repository:
                 conn.close()
 
         return await asyncio.to_thread(_op)
+
+    # --- System Config & Persistent Flags ---
+
+    async def get_system_config(self, key: str) -> Optional[str]:
+        """Fetch persistent configuration or operator flag by key."""
+        def _op():
+            conn = self._get_connection()
+            try:
+                cursor = conn.execute("SELECT value FROM system_config WHERE key = ?", (key,))
+                row = cursor.fetchone()
+                return str(row[0]) if row else None
+            except Exception:
+                return None
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_op)
+
+    async def set_system_config(self, key: str, value: str) -> None:
+        """Persist system configuration or operator flag (e.g. emergency kill switch)."""
+        async with self._lock:
+            def _op():
+                conn = self._get_connection()
+                try:
+                    with conn:
+                        conn.execute("""
+                            INSERT OR REPLACE INTO system_config (key, value, updated_at)
+                            VALUES (?, ?, ?)
+                        """, (key, str(value), time.time()))
+                finally:
+                    conn.close()
+
+            await asyncio.to_thread(_op)
+

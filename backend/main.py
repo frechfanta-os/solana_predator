@@ -75,6 +75,10 @@ async def lifespan(app: FastAPI):
     evaluator = DecisionOutcomeEvaluator(repo)
     rpc_client = SolanaRpcClient(http_url=settings.SOLANA_RPC_HTTP, ws_url=settings.SOLANA_RPC_WS)
     risk_guard = IndependentRiskGuard()
+    kill_switch_saved = await repo.get_system_config("emergency_kill_switch")
+    if kill_switch_saved == "true":
+        risk_guard.set_emergency_kill_switch(True)
+        logger.warning("RESTORED PERSISTENT EMERGENCY KILL-SWITCH: LIVE TRADING HALTED")
     quote_svc = LiveQuoteService()
     tx_builder = UnsignedTransactionBuilder()
     wallet_svc = WalletService(rpc_client)

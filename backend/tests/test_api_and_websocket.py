@@ -44,6 +44,26 @@ def test_admin_auth_required_for_mutations(client):
     assert data["events_replayed"] > 0
 
 
+def test_live_kill_switch_route_and_admin_auth(client):
+    # Unauthenticated attempt should fail with 401
+    resp_unauth = client.post("/api/live/kill-switch", json={"active": True})
+    assert resp_unauth.status_code == 401
+
+    # Authenticated attempt succeeds
+    headers = {"X-Admin-Key": settings.ADMIN_API_KEY}
+    resp_auth = client.post("/api/live/kill-switch", json={"active": True}, headers=headers)
+    assert resp_auth.status_code == 200
+    data = resp_auth.json()
+    assert data["emergency_kill_switch_active"] is True
+    assert data["status"] == "KILL_SWITCH_ENGAGED"
+
+    # Reset kill-switch
+    resp_off = client.post("/api/live/kill-switch", json={"active": False}, headers=headers)
+    assert resp_off.status_code == 200
+    assert resp_off.json()["emergency_kill_switch_active"] is False
+
+
+
 def test_websocket_connection_and_ping(client):
     with client.websocket_connect("/ws") as ws:
         ws.send_text("ping")

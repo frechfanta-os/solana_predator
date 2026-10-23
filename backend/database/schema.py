@@ -334,3 +334,14 @@ CREATE TABLE IF NOT EXISTS risk_audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_risk_audit_prop ON risk_audit_log(proposal_id);
 """
+
+
+SCHEMA_V3 = """
+-- Persistent system configuration & operator flags (e.g. emergency kill-switch)
+CREATE TABLE IF NOT EXISTS system_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+"""
+

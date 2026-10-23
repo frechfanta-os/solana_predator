@@ -12,6 +12,7 @@ from backend.live.models import (
 )
 from backend.market.solana_rpc import SolanaRpcClient
 from backend.database.repository import Repository
+from backend.config import settings
 
 logger = logging.getLogger("predator.live.broadcast")
 
@@ -64,18 +65,23 @@ class LiveBroadcastService:
         await self.repository.save_live_transaction(tx_record.model_dump())
         await self.repository.update_live_proposal_status(proposal_id, LiveProposalStatus.BROADCASTING.value)
 
-        # 3. Broadcast to Solana RPC via sendRawTransaction
-        try:
-            logger.info("Broadcasting signed transaction %s for proposal %s...", tx_signature, proposal_id)
-            rpc_res = await self.rpc_client.call_rpc(
-                "sendTransaction",
-                [signed_tx_base64, {"encoding": "base64", "skipPreflight": False, "preflightCommitment": "confirmed"}]
+        # 3. Broadcast to Solana RPC (Strictly gated by ALLOW_TRANSACTION_SUBMISSION)
+        if settings.ALLOW_TRANSACTION_SUBMISSION:
+            try:
+                logger.info("Broadcasting signed transaction %s for proposal %s...", tx_signature, proposal_id)
+                rpc_res = await self.rpc_client.call_rpc(
+                    "sendTransaction",
+                    [signed_tx_base64, {"encoding": "base64", "skipPreflight": False, "preflightCommitment": "confirmed"}]
+                )
+                if not rpc_res or isinstance(rpc_res, dict) and "error" in rpc_res:
+                    logger.info("Solana RPC returned confirmation status for %s", tx_signature)
+            except Exception as e:
+                logger.warning("Network RPC send attempt logged: %s", e)
+        else:
+            logger.info(
+                "ALLOW_TRANSACTION_SUBMISSION=False: Simulated dry-run confirmation for %s (zero on-chain submission)",
+                tx_signature,
             )
-            # In simulation / local replay, generate successful confirmation
-            if not rpc_res or isinstance(rpc_res, dict) and "error" in rpc_res:
-                logger.info("Solana RPC returned confirmation status for %s", tx_signature)
-        except Exception as e:
-            logger.warning("Network RPC send attempt logged: %s", e)
 
         # 4. Simulate confirmation poll
         await self.repository.update_live_transaction_status(

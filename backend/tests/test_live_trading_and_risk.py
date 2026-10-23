@@ -295,3 +295,53 @@ async def test_risk_audit_logging_in_repository(repo):
     assert logs[0]["proposal_id"] == "prop_audit_test"
     assert logs[0]["check_name"] == "MAX_TRADE_AMOUNT"
     assert logs[0]["passed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_zero_rpc_submission_when_allow_submission_is_false(repo):
+    from unittest.mock import MagicMock, AsyncMock
+    rpc_mock = MagicMock()
+    rpc_mock.call_rpc = AsyncMock(side_effect=AssertionError("sendTransaction must not be called when ALLOW_TRANSACTION_SUBMISSION=False!"))
+
+    broadcast_svc = LiveBroadcastService(rpc_client=rpc_mock, repository=repo)
+    signed_wire = bytes([1]) + (b"\xaa" * 64) + (b"\x01" * 30)
+    signed_b64 = base64.b64encode(signed_wire).decode("utf-8")
+
+    record = await broadcast_svc.broadcast_signed_transaction(
+        proposal_id="prop_dryrun",
+        signed_tx_base64=signed_b64,
+        wallet_address="5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1",
+        token_mint="4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+        side="BUY",
+        amount_sol=0.5,
+        amount_tokens=100.0,
+    )
+    assert record.status == LiveTransactionStatus.CONFIRMED
+    assert rpc_mock.call_rpc.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_blocks_submit_user_signature_and_no_balance_fabrication(risk_guard, repo):
+    from unittest.mock import MagicMock, AsyncMock
+    # 1. Verify WalletService does not fabricate 1.5 SOL when RPC fails
+    rpc_fail = MagicMock()
+    rpc_fail.call_rpc = AsyncMock(side_effect=Exception("RPC offline"))
+    wallet_svc = WalletService(rpc_client=rpc_fail)
+    conn = await wallet_svc.connect_wallet("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1")
+    assert conn.sol_balance == 0.0
+    assert conn.sol_balance_lamports == 0
+
+    # 2. Verify submit_user_signature blocks when kill-switch is engaged
+    order_mgr = LiveOrderManager(
+        repository=repo,
+        risk_guard=risk_guard,
+        quote_service=LiveQuoteService(),
+        tx_builder=UnsignedTransactionBuilder(),
+        broadcast_service=LiveBroadcastService(rpc_fail, repo),
+        wallet_service=wallet_svc,
+    )
+    risk_guard.set_emergency_kill_switch(True)
+    with pytest.raises(ValueError, match="Emergency kill-switch is active"):
+        await order_mgr.submit_user_signature("prop_any", "AQAAAA==")
+    risk_guard.set_emergency_kill_switch(False)
+
