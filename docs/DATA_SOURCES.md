@@ -41,7 +41,13 @@
 - **Endpoints**: `/defi/quotation/v1/tokens/sol/{token_mint}`.
 - **Account Balance Restriction**: GMGN currently requires an on-chain account balance of at least 100 USD to generate an active OpenAPI key.
 - **Strict Invariant**: No funds are ever deposited to bypass restrictions. The provider is completely optional (`GMGN_ENABLED=False` by default).
-- **Graceful Fallback**: If unconfigured, disabled, rate-limited (HTTP 429), or balance-restricted (HTTP 401/403), the adapter returns `None` immediately, allowing seamless and zero-downtime fallback to DEX Screener and Solana RPC.
+- **Graceful Fallback & Recalculated Availability**:
+  - If unconfigured, disabled, rate-limited (HTTP 429), or balance-restricted (HTTP 401/403), the adapter returns `None` immediately, allowing seamless and zero-downtime fallback to DEX Screener and Solana RPC.
+  - **Availability Recalculation Policy**: An explicit cooldown probing policy (`RESTRICTION_COOLDOWN_SEC = 60.0s`) avoids permanent terminal disabling. Once cooldown expires, a single probe is permitted; upon success, the provider automatically recovers.
+- **Resilience Features**:
+  - Bounded in-memory LRU cache with TTL (`GMGN_CACHE_TTL_SEC = 15.0s`, max 1000 entries) preventing duplicate network requests.
+  - Concurrency limiting via `asyncio.Semaphore(5)`.
+  - Bounded exponential retries for transient 5xx server errors.
 - **Seamless Re-activation**: GMGN can be re-activated at any time simply by setting `GMGN_ENABLED=true` and `GMGN_API_KEY=...` in local environment variables, with no code or agent modifications required.
 
 ---
@@ -66,19 +72,23 @@ class BaseMarketDataProvider(ABC):
 ```
 
 ### Providers & Composite Failover
-1. **`GmgnMarketProvider`**: Priority 1 when configured and available; marks itself unavailable upon 401/403 balance restriction.
+1. **`GmgnMarketProvider`**: Priority 1 when configured and available; marks itself unavailable upon 401/403 balance restriction or circuit open, with 60s cooldown re-probing.
 2. **`DexScreenerProvider`**: Priority 2 primary source for free, public price, liquidity, volume, and pair quotes.
-3. **`SolanaRpcProvider`**: Priority 3 on-chain fallback for verified slot, blockhash, and transaction activity.
-4. **`CompositeMarketDataProvider`**: Orchestrates failover order (`GMGN -> DEX Screener -> Solana RPC`), tracks telemetry, latency, and assigns observation states.
+3. **`SolanaRpcProvider`**: Priority 3 on-chain fallback for verified slot, blockhash, and transaction activity. Separates on-chain truth from missing market pricing (`observation_state = "MISSING"` for pricing, `metadata["on_chain_observed"] = True`).
+4. **`CompositeMarketDataProvider`**: Orchestrates failover order (`GMGN -> DEX Screener -> Solana RPC`), tracks telemetry, latency, explicit provenance (`event.source`), and traversal history (`fallback_path`).
 
 ---
 
 ## 3. Data Freshness and Quality Policy
 
 - **No Data Fabrication**: The normalizer and providers strictly assign `None` to missing prices, liquidity, or volume values. The system never substitutes artificial baseline values for missing telemetry.
+- **Strict Staleness Invariant**:
+  - Staleness is evaluated against the observation timestamp (`source_timestamp`) when available.
+  - **Crucial Rule**: An old observation (e.g. 10 minutes old) never becomes fresh simply because it was received just now over HTTP.
+  - If source freshness cannot be determined, the system never pretends the data is fresh (`metadata["freshness_verified"] = False`, quality `UNVERIFIED`).
 - **Observation States**:
-  - `GENUINELY_OBSERVED`: Observed directly from active, fresh market feeds.
-  - `STALE`: Data age exceeds `DATA_STALENESS_THRESHOLD_SEC` (30s).
+  - `GENUINELY_OBSERVED`: Observed directly from active, fresh market feeds (age $\le 30$s).
+  - `STALE`: Data age exceeds `DATA_STALENESS_THRESHOLD_SEC` (30s) relative to observation timestamp.
   - `MISSING`: Data unavailable or incomplete across all providers; missing fields explicitly tracked in `missing_fields`.
 - **Quality Classifications**:
   - `EXCELLENT`: Source timestamp verified, verified price & liquidity, freshness < 5s.
@@ -86,4 +96,18 @@ class BaseMarketDataProvider(ABC):
   - `DEGRADED`: Missing liquidity or volume, but valid mint structure.
   - `STALE`: Data age exceeds threshold.
   - `MISSING`: Critical fields unavailable without fallback.
-  - `UNVERIFIED`: Unconfirmed logs or raw traces without confirmation.
+  - `UNVERIFIED`: Data received without verifiable source timestamp.
+
+---
+
+## 4. REST Endpoints & Telemetry Security
+
+1. **`GET /api/market/providers`**:
+   - Exposes operational status, configuration flag, availability flag, measured average latency, `last_checked` timestamp, and non-sensitive reason.
+   - **Zero Secret Leakage Mandate**: Never leaks API keys, private keypaths, or bearer tokens in responses.
+
+2. **`GET /api/market/token/{token_mint}`**:
+   - Strictly validates Solana base58 token mint format (`^[1-9A-HJ-NP-Za-km-z]{32,44}$`), returning `HTTP 400 Bad Request` if invalid.
+   - Verifies provider availability, returning `HTTP 503 Service Unavailable` if all providers are down.
+   - Returns `HTTP 404 Not Found` if token is unindexed across all active providers.
+   - Returns `HTTP 200 OK` with full observation state, missing fields, and explicit resolution provenance.

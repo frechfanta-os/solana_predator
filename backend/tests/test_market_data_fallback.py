@@ -104,7 +104,8 @@ async def test_gmgn_balance_restriction_fallback():
 
     health = await gmgn.check_health()
     assert health["available"] is False
-    assert "Balance check rejected" in health["reason"]
+    assert "AUTH_OR_BALANCE_RESTRICTED" in health["reason"]
+    assert "Balance check rejected" in health["last_error"]
 
 
 # 4. GMGN 429 Rate Limit Handling
@@ -215,7 +216,7 @@ async def test_distinction_observed_stale_missing():
     dex_client.base_url = "https://api.dexscreener.com"
     provider = DexScreenerProvider(client=dex_client)
 
-    # A. Genuinely Observed: Fresh price and liquidity
+    # A. Genuinely Observed: Fresh price and liquidity with verified observation timestamp
     fresh_pair = {
         "chainId": "solana",
         "pairAddress": "PairFresh1",
@@ -223,11 +224,13 @@ async def test_distinction_observed_stale_missing():
         "priceUsd": "1.50",
         "liquidity": {"usd": 50000.0},
         "volume": {"h24": 100000.0},
+        "pairCreatedAt": int((time.time() - 4.0) * 1000),  # 4s ago
     }
     dex_client.get_tokens_pairs = AsyncMock(return_value=[fresh_pair])
     ev1 = await provider.get_token_market_data("TokenFresh")
     assert ev1.observation_state == "GENUINELY_OBSERVED"
     assert ev1.quality in (EventQuality.EXCELLENT, EventQuality.ACCEPTABLE)
+    assert ev1.metadata["freshness_verified"] is True
 
     # B. Missing Data: Missing both price and liquidity (never hallucinate)
     missing_pair = {
@@ -245,22 +248,21 @@ async def test_distinction_observed_stale_missing():
     assert "price_usd" in ev2.missing_fields
     assert "liquidity_usd" in ev2.missing_fields
 
-    # C. Stale Data: Timestamp older than 30s threshold
+    # C. Stale Data: Source observation timestamp is 50s old (> 30s threshold)
     stale_pair = {
         "chainId": "solana",
         "pairAddress": "PairStale1",
         "baseToken": {"address": "TokenStale", "symbol": "STALE"},
         "priceUsd": "1.00",
         "liquidity": {"usd": 10000.0},
+        "pairCreatedAt": int((time.time() - 50.0) * 1000),  # 50s ago
     }
     dex_client.get_tokens_pairs = AsyncMock(return_value=[stale_pair])
     ev3 = await provider.get_token_market_data("TokenStale")
     assert ev3 is not None
-    # Simulate aging past staleness threshold (e.g. 45s ago)
-    ev3.local_receive_timestamp = time.time() - 45.0
-    provider._tag_observation_quality(ev3)
     assert ev3.observation_state == "STALE"
     assert ev3.quality == EventQuality.STALE
+    assert ev3.freshness_seconds >= 50.0
 
 
 # 8. Zero Fabrication Invariant
@@ -337,3 +339,255 @@ async def test_provider_health_api_route():
     assert health["providers"]["gmgn"]["configured"] is False
     assert health["providers"]["dex_screener"]["configured"] is True
     assert health["providers"]["solana_rpc"]["configured"] is True
+    assert "last_checked" in health["providers"]["dex_screener"]
+    assert "last_checked" in health["providers"]["solana_rpc"]
+
+
+# 11. Strict Staleness Invariant: Old Observation Does NOT Become Fresh on Arrival
+@pytest.mark.asyncio
+async def test_observation_timestamp_staleness_not_reset_by_fresh_receipt():
+    dex_client = MagicMock()
+    dex_client.base_url = "https://api.dexscreener.com"
+    provider = DexScreenerProvider(client=dex_client)
+
+    now = time.time()
+    # Observation is from 10 minutes (600s) ago
+    ancient_pair = {
+        "chainId": "solana",
+        "pairAddress": "PairAncient1",
+        "baseToken": {"address": "TokenAncient", "symbol": "OLD"},
+        "priceUsd": "0.50",
+        "liquidity": {"usd": 20000.0},
+        "volume": {"h24": 50000.0},
+        "pairCreatedAt": int((now - 600.0) * 1000),
+    }
+    dex_client.get_tokens_pairs = AsyncMock(return_value=[ancient_pair])
+
+    event = await provider.get_token_market_data("TokenAncient")
+    assert event is not None
+    # Crucial assertion: Fresh HTTP receipt timestamp does NOT make the data fresh
+    assert event.local_receive_timestamp >= now - 1.0
+    assert event.source_timestamp <= now - 590.0
+    assert event.freshness_seconds >= 590.0
+    assert event.observation_state == "STALE"
+    assert event.quality == EventQuality.STALE
+
+
+# 12. GMGN Availability Recalculation & Cooldown Probing Policy
+@pytest.mark.asyncio
+async def test_gmgn_cooldown_availability_recalculation():
+    gmgn = GmgnMarketProvider(
+        base_url="https://openapi.gmgn.ai",
+        api_key="sk-gmgn-test-cooldown-key",
+        enabled=True,
+    )
+    assert gmgn.is_available is True
+
+    # Simulate restriction
+    gmgn._auth_restricted = True
+    gmgn._last_failure_timestamp = time.time()
+    assert gmgn.is_available is False  # In cooldown
+
+    # Simulate cooldown expiration (> 60.0s)
+    gmgn._last_failure_timestamp = time.time() - 65.0
+    # Policy: After cooldown elapses, availability is restored for a probe
+    assert gmgn.is_available is True
+
+
+# 13. GMGN Bounded TTL Cache Hit Prevents Redundant Requests
+@pytest.mark.asyncio
+async def test_gmgn_cache_hit_prevents_duplicate_calls():
+    session_mock = MagicMock()
+    session_mock.closed = False
+    gmgn_data = {
+        "code": 0,
+        "data": {
+            "symbol": "CACHED",
+            "name": "Cached Token",
+            "price": "3.14",
+            "liquidity": 120000.0,
+            "volume_24h": 500000.0,
+            "updated_at": int(time.time()),
+        }
+    }
+    session_mock.get.return_value = MockAiohttpResponse(200, json.dumps(gmgn_data))
+
+    gmgn = GmgnMarketProvider(
+        api_key="sk-gmgn-cache-test",
+        enabled=True,
+        session=session_mock,
+    )
+
+    ev1 = await gmgn.get_token_market_data("TokenCache11111111111111111111111111111111")
+    assert ev1 is not None
+    assert gmgn._call_count == 1
+
+    # Second call for identical mint within TTL window should hit cache
+    ev2 = await gmgn.get_token_market_data("TokenCache11111111111111111111111111111111")
+    assert ev2 is not None
+    assert ev2.price_usd == 3.14
+    assert gmgn._call_count == 1  # No additional network request executed
+
+
+# 14. Solana RPC Distinguishes Chain Truth from Market Pricing
+@pytest.mark.asyncio
+async def test_solana_rpc_distinguishes_chain_from_market_metrics():
+    rpc_client = MagicMock()
+    rpc_client.http_url = "https://api.mainnet-beta.solana.com"
+    rpc_client._is_connected = True
+    rpc_client.get_slot = AsyncMock(return_value=290888777)
+    now = time.time()
+    rpc_client.get_signatures_for_address = AsyncMock(return_value=[
+        {"signature": "SigChainOnly1111111111111111111111111111111111", "blockTime": now - 10.0}
+    ])
+    rpc_provider = SolanaRpcProvider(client=rpc_client)
+
+    ev = await rpc_provider.get_token_market_data("TokenChainOnly111111111111111111111111111")
+    assert ev is not None
+    assert ev.slot == 290888777
+    assert ev.signature == "SigChainOnly1111111111111111111111111111111111"
+    # Pricing is NOT fabricated
+    assert ev.price_usd is None
+    assert ev.liquidity_usd is None
+    assert ev.volume_24h_usd is None
+    # Observation state for market metrics is MISSING
+    assert ev.observation_state == "MISSING"
+    assert ev.metadata["on_chain_observed"] is True
+    assert ev.metadata["on_chain_slot"] == 290888777
+
+
+# 15. REST Endpoint Token Mint Validation & Status Code Distinction
+@pytest.mark.asyncio
+async def test_market_token_endpoint_validation_and_status_codes():
+    from fastapi import HTTPException
+    from backend.api.routes import get_token_market_data_endpoint
+
+    composite_mock = MagicMock()
+    composite_mock.is_available = True
+
+    # A. Invalid base58 address raises HTTP 400
+    with pytest.raises(HTTPException) as exc_info:
+        await get_token_market_data_endpoint(token_mint="invalid!mint#", provider=composite_mock)
+    assert exc_info.value.status_code == 400
+    assert "Invalid Solana token mint" in exc_info.value.detail
+
+    # B. All providers unavailable raises HTTP 503
+    composite_down = MagicMock()
+    composite_down.is_available = False
+    valid_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    with pytest.raises(HTTPException) as exc_info:
+        await get_token_market_data_endpoint(
+            token_mint=valid_mint,
+            provider=composite_down,
+        )
+    assert exc_info.value.status_code == 503
+    assert "unavailable" in exc_info.value.detail
+
+    # C. Token not found raises HTTP 404
+    composite_mock.get_token_market_data = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc_info:
+        await get_token_market_data_endpoint(
+            token_mint=valid_mint,
+            provider=composite_mock,
+        )
+    assert exc_info.value.status_code == 404
+    assert "not found" in exc_info.value.detail
+
+
+# 16. Telemetry Does NOT Leak Sensitive Secrets
+@pytest.mark.asyncio
+async def test_no_secret_leakage_in_health_telemetry():
+    raw_secret = "secret-super-private-key-value-99999"
+    gmgn = GmgnMarketProvider(
+        base_url="https://openapi.gmgn.ai",
+        api_key=raw_secret,
+        enabled=True,
+    )
+    dex = DexScreenerProvider()
+    rpc = SolanaRpcProvider()
+    composite = CompositeMarketDataProvider(dex_screener=dex, solana_rpc=rpc, gmgn=gmgn)
+
+    health = await composite.check_health()
+    health_json = json.dumps(health)
+    # Mandate: Zero secret leakage in API telemetry
+    assert raw_secret not in health_json
+    assert "Bearer" not in health_json
+
+
+# 17. Paper Trading Continuity Under Market Provider Fallback
+@pytest.mark.asyncio
+async def test_paper_trading_continuity_under_provider_fallback():
+    from backend.paper.positions import PositionManager
+    from backend.models.paper import PaperPosition
+
+    repo_mock = MagicMock()
+    repo_mock.save_paper_position = AsyncMock()
+    pm = PositionManager(repository=repo_mock)
+    now = time.time()
+    mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+    # Open simulated position on TokenX
+    pos = PaperPosition(
+        position_id="pos-fallback-1",
+        token_mint=mint,
+        token_symbol="SIMX",
+        qty=100.0,
+        average_entry_price_usd=1.0,
+        current_price_usd=1.0,
+        invested_capital_usd=100.0,
+        current_value_usd=100.0,
+        unrealized_pnl_usd=0.0,
+        unrealized_pnl_pct=0.0,
+        peak_price_usd=1.0,
+        is_open=True,
+        opened_at=now - 10.0,
+    )
+    await pm.add_position(pos)
+    assert pos.is_open is True
+
+    # GMGN is restricted, but Composite falls back to DEX Screener which returns $1.15
+    dex_client = MagicMock()
+    dex_client.base_url = "https://api.dexscreener.com"
+    dex_pair = {
+        "chainId": "solana",
+        "pairAddress": "PairSim1",
+        "baseToken": {"address": mint, "symbol": "SIMX"},
+        "priceUsd": "1.15",
+        "liquidity": {"usd": 80000.0},
+        "volume": {"h24": 150000.0},
+        "pairCreatedAt": int((now - 5.0) * 1000),
+    }
+    dex_client.get_tokens_pairs = AsyncMock(return_value=[dex_pair])
+    dex_provider = DexScreenerProvider(client=dex_client)
+    gmgn = GmgnMarketProvider(enabled=False)
+    composite = CompositeMarketDataProvider(dex_screener=dex_provider, gmgn=gmgn)
+
+    event = await composite.get_token_market_data(mint)
+    assert event is not None
+    assert event.source == MarketSource.DEX_SCREENER
+    assert event.price_usd == 1.15
+
+    # Mark to market with fallback price
+    updated_pos = await pm.mark_to_market(
+        token_mint=event.token_mint,
+        current_price_usd=event.price_usd,
+        freshness_seconds=event.freshness_seconds,
+    )
+    assert updated_pos is not None
+    assert updated_pos.current_price_usd == 1.15
+    assert updated_pos.unrealized_pnl_usd == pytest.approx(15.0, abs=0.01)
+    assert updated_pos.unrealized_pnl_pct == pytest.approx(15.0, abs=0.01)
+    assert event is not None
+    assert event.source == MarketSource.DEX_SCREENER
+    assert event.price_usd == 1.15
+
+    # Mark to market with fallback price
+    updated_pos = await pm.mark_to_market(
+        token_mint=event.token_mint,
+        current_price_usd=event.price_usd,
+        freshness_seconds=event.freshness_seconds,
+    )
+    assert updated_pos is not None
+    assert updated_pos.current_price_usd == 1.15
+    assert updated_pos.unrealized_pnl_usd == pytest.approx(15.0, abs=0.01)
+    assert updated_pos.unrealized_pnl_pct == pytest.approx(15.0, abs=0.01)

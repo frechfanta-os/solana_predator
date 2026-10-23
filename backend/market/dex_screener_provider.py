@@ -23,6 +23,8 @@ class DexScreenerProvider(BaseMarketDataProvider):
         self._call_count = 0
         self._error_count = 0
         self._total_latency_ms = 0.0
+        self._last_checked = time.time()
+        self._last_error: Optional[str] = None
 
     @property
     def name(self) -> str:
@@ -70,6 +72,7 @@ class DexScreenerProvider(BaseMarketDataProvider):
         except Exception as e:
             self._error_count += 1
             self._consecutive_failures += 1
+            self._last_error = f"DexScreener query error: {e}"
             return None
 
     async def get_token_pairs(self, token_addresses: List[str]) -> List[NormalizedMarketEvent]:
@@ -91,14 +94,22 @@ class DexScreenerProvider(BaseMarketDataProvider):
                     self._tag_observation_quality(ev)
                     events.append(ev)
             return events
-        except Exception:
+        except Exception as e:
             self._error_count += 1
             self._consecutive_failures += 1
+            self._last_error = f"DexScreener batch error: {e}"
             return []
 
     def _tag_observation_quality(self, event: NormalizedMarketEvent) -> None:
-        """Categorize data as GENUINELY_OBSERVED, STALE, or MISSING."""
+        """Categorize data as GENUINELY_OBSERVED, STALE, or MISSING.
+        
+        Strict Staleness Invariant:
+        Staleness is computed from the observation timestamp (source_timestamp) when available,
+        preventing an old observation from appearing fresh simply because it was just received.
+        If source freshness cannot be verified, it is never pretended to be fresh.
+        """
         now = time.time()
+        self._last_checked = now
         missing = []
         if event.price_usd is None:
             missing.append("price_usd")
@@ -108,23 +119,41 @@ class DexScreenerProvider(BaseMarketDataProvider):
             missing.append("volume_24h_usd")
         event.missing_fields = missing
 
+        # Determine age and verified source status
+        if event.source_timestamp is not None:
+            age = max(0.0, now - event.source_timestamp)
+            event.freshness_seconds = round(age, 3)
+            event.metadata["freshness_verified"] = True
+        else:
+            age = max(0.0, now - event.local_receive_timestamp)
+            event.freshness_seconds = round(age, 3)
+            event.metadata["freshness_verified"] = False
+
         if len(missing) >= 2:
             event.observation_state = "MISSING"
             event.quality = EventQuality.MISSING
-        elif (now - event.local_receive_timestamp) > settings.DATA_STALENESS_THRESHOLD_SEC:
+        elif age > settings.DATA_STALENESS_THRESHOLD_SEC:
             event.observation_state = "STALE"
             event.quality = EventQuality.STALE
+        elif not event.metadata.get("freshness_verified", False):
+            event.observation_state = "GENUINELY_OBSERVED"
+            event.quality = EventQuality.UNVERIFIED if not missing else EventQuality.DEGRADED
         else:
             event.observation_state = "GENUINELY_OBSERVED"
             event.quality = EventQuality.EXCELLENT if not missing else EventQuality.ACCEPTABLE
 
     async def check_health(self) -> Dict[str, Any]:
+        self._last_checked = time.time()
         avg_lat = round(self._total_latency_ms / max(1, self._call_count), 2)
+        reason = "ONLINE" if self.is_available else (self._last_error or "PROVIDER_UNAVAILABLE")
         return {
             "name": self.name,
             "source": self.source.value,
             "configured": self.is_configured,
             "available": self.is_available,
+            "reason": reason,
+            "last_checked": self._last_checked,
+            "last_error": self._last_error,
             "call_count": self._call_count,
             "error_count": self._error_count,
             "consecutive_failures": self._consecutive_failures,

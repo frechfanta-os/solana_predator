@@ -64,31 +64,51 @@ class CompositeMarketDataProvider(BaseMarketDataProvider):
         return any(p.is_available for p in self._providers)
 
     async def get_token_market_data(self, token_mint: str) -> Optional[NormalizedMarketEvent]:
-        """Fetch market data with automatic prioritized fallback."""
+        """Fetch market data with automatic prioritized fallback and explicit provenance."""
         now = time.time()
+        fallback_trail: List[str] = []
 
         # 1. Try GMGN if configured and operational
         if self.gmgn.is_configured and self.gmgn.is_available:
             try:
                 event = await self.gmgn.get_token_market_data(token_mint)
                 if event and (event.price_usd is not None or event.liquidity_usd is not None):
+                    event.metadata["fallback_path"] = ["gmgn"]
+                    event.metadata["provider_resolved"] = self.gmgn.name
                     return event
+                fallback_trail.append("gmgn_no_market_data")
             except Exception as e:
+                fallback_trail.append(f"gmgn_error_{type(e).__name__}")
                 logger.warning("GMGN provider lookup failed (%s). Falling back to DEX Screener.", e)
+        else:
+            fallback_trail.append("gmgn_unconfigured_or_unavailable")
 
         # 2. Fallback to DEX Screener (Standard primary source for price/liquidity)
         if self.dex_screener.is_available:
             try:
                 event = await self.dex_screener.get_token_market_data(token_mint)
-                if event:
+                if event and (event.price_usd is not None or event.liquidity_usd is not None):
+                    event.metadata["fallback_path"] = fallback_trail + ["dex_screener"]
+                    event.metadata["provider_resolved"] = self.dex_screener.name
                     return event
+                if event:
+                    fallback_trail.append("dex_screener_partial")
+                else:
+                    fallback_trail.append("dex_screener_unlisted")
             except Exception as e:
+                fallback_trail.append(f"dex_screener_error_{type(e).__name__}")
                 logger.warning("DEX Screener lookup failed (%s). Falling back to Solana RPC.", e)
+        else:
+            fallback_trail.append("dex_screener_unavailable")
 
         # 3. Fallback to Solana RPC (On-chain truth for slot/signatures without faking prices)
         if self.solana_rpc.is_available:
             try:
-                return await self.solana_rpc.get_token_market_data(token_mint)
+                event = await self.solana_rpc.get_token_market_data(token_mint)
+                if event:
+                    event.metadata["fallback_path"] = fallback_trail + ["solana_rpc"]
+                    event.metadata["provider_resolved"] = self.solana_rpc.name
+                    return event
             except Exception as e:
                 logger.error("All market data providers failed for token %s: %s", token_mint, e)
 

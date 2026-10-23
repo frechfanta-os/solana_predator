@@ -528,12 +528,36 @@ async def get_token_market_data_endpoint(
     token_mint: str,
     provider: Any = Depends(get_market_provider),
 ):
-    """Fetch normalized market metrics for a token mint with automatic provider failover."""
-    event = await provider.get_token_market_data(token_mint)
+    """Fetch normalized market metrics for a token mint with automatic provider failover.
+    
+    Validates token mint format, verifies provider availability, distinguishes between
+    missing data, unknown tokens, and provider errors, and returns the effective source.
+    """
+    import re
+    if not re.match(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$", token_mint):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid Solana token mint address format: '{token_mint}'. Expected base58 string between 32 and 44 characters."
+        )
+
+    if not provider.is_available:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="All registered market data providers are currently unavailable or failing."
+        )
+
+    try:
+        event = await provider.get_token_market_data(token_mint)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Market data provider query failed unexpectedly: {e}"
+        )
+
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Token market data unavailable from all active providers for mint: {token_mint}"
+            detail=f"Token '{token_mint}' not found on any active market data provider."
         )
     return event.model_dump()
 

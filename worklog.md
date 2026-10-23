@@ -486,6 +486,49 @@ export LLM_API_KEY="<your_glm_api_key>"
 - **Frontend Suite**: **5 / 5 Flutter widget tests passing**.
 - **Isolation Verification**: `git status` in `/root/aidesk` and `/root/gmgn_sentinel_desk` is clean and untouched.
 
+---
+
+## Phase 9: In-Depth Technical Audit & Hardening of Market Providers (2026-10-23)
+
+### 1. Audit Findings & Diagnosed Defects
+1. **Staleness Checked Receipt Time Instead of Observation Time**:
+   - In `DexScreenerProvider._tag_observation_quality()`, age was evaluated against `local_receive_timestamp`. Ancient source data received just now was falsely marked fresh.
+   - **Correction**: Staleness is now evaluated strictly against `source_timestamp` (when available). An old observation (>30s) is strictly marked `STALE` regardless of HTTP receipt time. If unverified, it is never pretended to be fresh (`quality=UNVERIFIED`).
+2. **GMGN Freshness Hardcoded to 0.0s**:
+   - Remote quotation payloads contain `updated_at` / `timestamp`. Hardcoded 0.0s did not reflect source age.
+   - **Correction**: Extracted remote source timestamps from GMGN responses; calculated real freshness.
+3. **Solana RPC Market Pricing Observation State Ambiguity**:
+   - RPC provides on-chain truth (slot, signatures, blockTime) but no USD prices. It was marking events as `GENUINELY_OBSERVED` for market metrics despite missing all price fields.
+   - **Correction**: For market metrics, `observation_state="MISSING"`, while setting `metadata["on_chain_observed"]=True`, `metadata["on_chain_slot"]=slot`, and calculating `freshness_seconds` from `blockTime`.
+4. **Permanent Disabling on Transient Error**:
+   - GMGN key/balance restriction permanently disabled `is_available` with no recovery path.
+   - **Correction**: Implemented explicit cooldown probing policy (`RESTRICTION_COOLDOWN_SEC = 60.0s`). After cooldown, a single probe is permitted; upon success, provider auto-recovers.
+5. **Missing Resilience Mechanics**:
+   - Added bounded LRU cache (`MAX_CACHE_SIZE=1000`, TTL 15s) in `GmgnMarketProvider`.
+   - Added `asyncio.Semaphore(5)` concurrency bounding.
+   - Added bounded retries with backoff for transient 5xx server errors.
+6. **Missing Health Telemetry Fields**:
+   - Standardized `last_checked`, `reason`, and sanitized non-sensitive `last_error` across all providers.
+7. **REST Endpoint Deficiencies**:
+   - `GET /api/market/token/{token_mint}` now validates Solana base58 address (`^[1-9A-HJ-NP-Za-km-z]{32,44}$`) with `HTTP 400`.
+   - Returns `HTTP 503` if all providers are down, `HTTP 404` if token not found, and `HTTP 200` with provenance trail.
+
+### 2. Test Execution & Verification
+- **Expanded Fallback Suite** (`backend/tests/test_market_data_fallback.py`):
+  - 17 / 17 tests passing (100% green in 4.10s), adding:
+    - `test_observation_timestamp_staleness_not_reset_by_fresh_receipt`
+    - `test_gmgn_cooldown_availability_recalculation`
+    - `test_gmgn_cache_hit_prevents_duplicate_calls`
+    - `test_solana_rpc_distinguishes_chain_from_market_metrics`
+    - `test_market_token_endpoint_validation_and_status_codes`
+    - `test_no_secret_leakage_in_health_telemetry`
+    - `test_paper_trading_continuity_under_provider_fallback`
+- **Full Backend Suite**: **100 / 100 tests passing (100% green in 169.59s)**.
+- **Frontend Suite**: **5 / 5 Flutter widget tests passing**.
+- **Isolation Mandate**: `/root/aidesk` and `/root/gmgn_sentinel_desk` 100% clean and untouched.
+- **Zero Real Orders**: Paper Trading preserved intact; 0 on-chain transactions executed.
+
+
 
 
 

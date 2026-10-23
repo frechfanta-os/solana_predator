@@ -16,6 +16,8 @@ class SolanaRpcProvider(BaseMarketDataProvider):
         self._call_count = 0
         self._error_count = 0
         self._total_latency_ms = 0.0
+        self._last_checked = time.time()
+        self._last_error: Optional[str] = None
 
     @property
     def name(self) -> str:
@@ -38,6 +40,7 @@ class SolanaRpcProvider(BaseMarketDataProvider):
         start_mono = time.perf_counter()
         self._call_count += 1
         now = time.time()
+        self._last_checked = now
         try:
             slot = await self._client.get_slot()
             sigs = await self._client.get_signatures_for_address(token_mint, limit=5)
@@ -47,7 +50,19 @@ class SolanaRpcProvider(BaseMarketDataProvider):
             latest_sig = sigs[0].get("signature") if sigs else None
             source_ts = float(sigs[0].get("blockTime")) if sigs and sigs[0].get("blockTime") else None
 
-            # On-chain RPC does not provide USD pricing or liquidity: NEVER invent it!
+            # Calculate freshness from on-chain blockTime when available
+            if source_ts is not None:
+                age = max(0.0, now - source_ts)
+                freshness = round(age, 3)
+                is_stale = age > settings.DATA_STALENESS_THRESHOLD_SEC
+                quality = EventQuality.STALE if is_stale else EventQuality.ACCEPTABLE
+                freshness_verified = True
+            else:
+                freshness = 0.0
+                quality = EventQuality.UNVERIFIED
+                freshness_verified = False
+
+            # On-chain RPC provides on-chain truth, but NO USD pricing or liquidity: NEVER invent it!
             missing = ["price_usd", "volume_24h_usd", "liquidity_usd"]
 
             return NormalizedMarketEvent(
@@ -58,20 +73,26 @@ class SolanaRpcProvider(BaseMarketDataProvider):
                 source_timestamp=source_ts,
                 local_receive_timestamp=now,
                 processing_timestamp=time.time(),
-                freshness_seconds=0.0,
+                freshness_seconds=freshness,
                 price_usd=None,
                 volume_24h_usd=None,
                 liquidity_usd=None,
                 signature=latest_sig,
-                observation_state="GENUINELY_OBSERVED",
+                observation_state="MISSING",
                 missing_fields=missing,
                 provider_latency_ms=round(latency_ms, 2),
-                quality=EventQuality.ACCEPTABLE,
+                quality=quality,
                 confidence_score=0.99,
-                metadata={"recent_signatures_count": len(sigs)},
+                metadata={
+                    "on_chain_observed": True,
+                    "on_chain_slot": slot,
+                    "recent_signatures_count": len(sigs),
+                    "freshness_verified": freshness_verified,
+                },
             )
-        except Exception:
+        except Exception as e:
             self._error_count += 1
+            self._last_error = f"Solana RPC query error: {e}"
             return None
 
     async def get_token_pairs(self, token_addresses: List[str]) -> List[NormalizedMarketEvent]:
@@ -83,12 +104,17 @@ class SolanaRpcProvider(BaseMarketDataProvider):
         return events
 
     async def check_health(self) -> Dict[str, Any]:
+        self._last_checked = time.time()
         avg_lat = round(self._total_latency_ms / max(1, self._call_count), 2)
+        reason = "ONLINE" if self.is_available else (self._last_error or "RPC_DISCONNECTED")
         return {
             "name": self.name,
             "source": self.source.value,
             "configured": self.is_configured,
             "available": self.is_available,
+            "reason": reason,
+            "last_checked": self._last_checked,
+            "last_error": self._last_error,
             "call_count": self._call_count,
             "error_count": self._error_count,
             "avg_latency_ms": avg_lat,
