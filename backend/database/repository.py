@@ -101,7 +101,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    # --- Token Registry & Lifecycle ---
+        return await asyncio.to_thread(_op)
+
+    # --- Token Registry & Lifecycle ---
 
     async def upsert_token(self, token: TokenMetadata, initial_state: str = "DISCOVERED") -> bool:
         async with self._lock:
@@ -177,7 +179,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    # --- Token Snapshots ---
+        return await asyncio.to_thread(_op)
+
+    # --- Token Snapshots ---
 
     async def save_token_snapshot(self, snapshot: TokenSnapshot) -> None:
         async with self._lock:
@@ -268,7 +272,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    # --- Agent Decisions ---
+        return await asyncio.to_thread(_op)
+
+    # --- Agent Decisions ---
 
     async def save_agent_decision(self, consensus_id: str, token_mint: str, result: AgentResult) -> None:
         async with self._lock:
@@ -318,7 +324,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    # --- Paper Orders, Fills, Positions, Portfolio ---
+        return await asyncio.to_thread(_op)
+
+    # --- Paper Orders, Fills, Positions, Portfolio ---
 
     async def save_paper_order(self, order: PaperOrder) -> None:
         async with self._lock:
@@ -446,7 +454,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def get_all_positions(self) -> List[PaperPosition]:
+        return await asyncio.to_thread(_op)
+
+    async def get_all_positions(self) -> List[PaperPosition]:
         def _op():
             conn = self._get_connection()
             try:
@@ -478,7 +488,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def save_portfolio_snapshot(self, snap: PortfolioSnapshot) -> None:
+        return await asyncio.to_thread(_op)
+
+    async def save_portfolio_snapshot(self, snap: PortfolioSnapshot) -> None:
         async with self._lock:
             def _op():
                 conn = self._get_connection()
@@ -537,7 +549,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def get_portfolio_history(self, limit: int = 100) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(_op)
+
+    async def get_portfolio_history(self, limit: int = 100) -> List[Dict[str, Any]]:
         def _op():
             conn = self._get_connection()
             try:
@@ -548,7 +562,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def log_system_event(self, event_id: str, event_type: str, severity: str, message: str, details: Optional[Dict[str, Any]] = None) -> None:
+        return await asyncio.to_thread(_op)
+
+    async def log_system_event(self, event_id: str, event_type: str, severity: str, message: str, details: Optional[Dict[str, Any]] = None) -> None:
         async with self._lock:
             def _op():
                 conn = self._get_connection()
@@ -647,7 +663,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    # --- Step 3: Measurable Learning & Strategy Benchmarks ---
+        return await asyncio.to_thread(_op)
+
+    # --- Step 3: Measurable Learning & Strategy Benchmarks ---
 
     async def save_decision_outcome(self, outcome: Any) -> None:
         async with self._lock:
@@ -706,7 +724,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def save_strategy_benchmark(self, bench: Any) -> None:
+        return await asyncio.to_thread(_op)
+
+    async def save_strategy_benchmark(self, bench: Any) -> None:
         async with self._lock:
             def _op():
                 conn = self._get_connection()
@@ -750,7 +770,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    # --- Step 4: Live Trading Proposals, Transactions & Risk Audit ---
+        return await asyncio.to_thread(_op)
+
+    # --- Step 4: Live Trading Proposals, Transactions & Risk Audit ---
 
     async def save_live_proposal(self, p: Dict[str, Any]) -> None:
         async with self._lock:
@@ -810,7 +832,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def update_live_proposal_status(self, proposal_id: str, status: str, rejection_reason: Optional[str] = None) -> None:
+        return await asyncio.to_thread(_op)
+
+    async def update_live_proposal_status(self, proposal_id: str, status: str, rejection_reason: Optional[str] = None) -> None:
         async with self._lock:
             def _op():
                 conn = self._get_connection()
@@ -886,7 +910,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def log_risk_audit(
+        return await asyncio.to_thread(_op)
+
+    async def log_risk_audit(
         self,
         proposal_id: Optional[str],
         check_name: str,
@@ -941,7 +967,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def get_token_market_events(self, token_mint: str, start_time: Optional[float] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(_op)
+
+    async def get_token_market_events(self, token_mint: str, start_time: Optional[float] = None, limit: int = 100) -> List[Dict[str, Any]]:
         def _op():
             conn = self._get_connection()
             try:
@@ -961,7 +989,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    # --- System Config & Persistent Flags ---
+        return await asyncio.to_thread(_op)
+
+    # --- System Config & Persistent Flags ---
 
     async def get_system_config(self, key: str) -> Optional[str]:
         """Fetch persistent configuration or operator flag by key."""
@@ -976,7 +1006,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def set_system_config(self, key: str, value: str) -> None:
+        return await asyncio.to_thread(_op)
+
+    async def set_system_config(self, key: str, value: str) -> None:
         """Persist system configuration or operator flag (e.g. emergency kill switch)."""
         async with self._lock:
             def _op():
@@ -1056,7 +1088,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def get_desk_status(self, desk_id: str) -> Optional[Dict[str, Any]]:
+        return await asyncio.to_thread(_op)
+
+    async def get_desk_status(self, desk_id: str) -> Optional[Dict[str, Any]]:
         def _op():
             conn = self._get_connection()
             try:
@@ -1073,7 +1107,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def save_desk_task(self, task: Any, max_retention: int = 2000) -> None:
+        return await asyncio.to_thread(_op)
+
+    async def save_desk_task(self, task: Any, max_retention: int = 2000) -> None:
         """Idempotently save a task execution record with bounded telemetry retention."""
         async with self._lock:
             def _op():
@@ -1161,7 +1197,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def save_desk_report(self, report: Any, max_retention: int = 2000) -> None:
+        return await asyncio.to_thread(_op)
+
+    async def save_desk_report(self, report: Any, max_retention: int = 2000) -> None:
         """Idempotently save a structured agent report with bounded telemetry retention."""
         async with self._lock:
             def _op():
@@ -1259,7 +1297,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def upsert_watchlist_item(self, item: Any) -> None:
+        return await asyncio.to_thread(_op)
+
+    async def upsert_watchlist_item(self, item: Any) -> None:
         async with self._lock:
             def _op():
                 conn = self._get_connection()
@@ -1309,7 +1349,9 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)    async def log_health_transition(
+        return await asyncio.to_thread(_op)
+
+    async def log_health_transition(
         self,
         component: str,
         from_state: Optional[str],
