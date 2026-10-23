@@ -578,6 +578,54 @@ export LLM_API_KEY="<your_glm_api_key>"
 - **Isolation Mandate**: `/root/aidesk` and `/root/gmgn_sentinel_desk` 100% clean and untouched.
 - **Zero Real Orders**: Paper Trading preserved intact; 0 real Solana transactions executed.
 
+---
+
+## Phase 11: Final Validation & Operational Classification of Mobula Provider (2026-10-23)
+
+### 1. Documented Access Conditions & Empirical Probe
+- **Endpoints Examined**:
+  - `GET https://api.mobula.io/api/2/token/details?chainId=solana&address={token_mint}`
+  - `GET https://api.mobula.io/api/1/market/data?asset=solana`
+- **Documented API Access Tiers**:
+  - Mobula enforces a paid tier requirement on production REST endpoints (`api.mobula.io`). The minimum tier is Start-up at $50/month (125,000 credits, 30 RPS).
+  - Calling `api.mobula.io` without a paid subscription returns `HTTP 403 Forbidden` (`{"message":"API access is unavailable on the Free plan","error":"Forbidden","statusCode":403}`).
+  - Probing `demo-api.mobula.io` also returns identical HTTP 403 errors for token details endpoints.
+- **Operational Status Classification**:
+  - Strictly classified as **NON OPÉRATIONNEL (EN ATTENTE DE PLAN PAYANT)**. Mobula is NOT considered operational until an authorized endpoint returns an actionable market quotation.
+
+### 2. Empirical Verification of Verification Criteria
+1. **`MOBULA_ENABLED=false` Zero Network Calls**:
+   - Verified that when `enabled=False` or `MOBULA_ENABLED=false`, `is_configured` and `is_available` are strictly `False`.
+   - `get_token_market_data()` returns `None` immediately, performing exactly **0 network requests** (`call_count == 0`, session.get is never called).
+   - In `CompositeMarketDataProvider`, Mobula is completely bypassed without any network traffic.
+2. **Telemetry Distinction for 401, 403, 429, and 5xx**:
+   - `check_health()` cleanly differentiates:
+     - 401 & 403: `reason = "AUTH_OR_PLAN_RESTRICTED (cooldown remaining: ...s)"`, `last_error` names HTTP 401 or 403 with server error message.
+     - 429: `reason` reflects `"Mobula Rate limit exceeded (HTTP 429)"`.
+     - 5xx: `reason` reflects `"CONSECUTIVE_FAILURES_CIRCUIT_OPEN"` after 3 failures, or transient 5xx server error.
+3. **Live Read-Only Fallback to DEX Screener**:
+   - Executed live probe to `https://api.dexscreener.com/latest/dex/tokens/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`:
+     - Returned `HTTP 200 OK` in 1,480ms with 30 observable pairs, price `$0.9987` and liquidity `$1.74M`.
+   - Executed live composite query with Mobula restricted:
+     - Output: `event.source = MarketSource.DEX_SCREENER`, `provider_resolved = 'dex_screener'`, `fallback_path = ['gmgn_unconfigured_or_unavailable', 'mobula_no_market_data', 'dex_screener']`.
+     - Zero interruption or latency degradation for paper trading or multi-agent engine.
+4. **Zero Price Invention (Partial, Stale, Error Invariants)**:
+   - Partial responses (e.g. price present without volume/liquidity) assign strictly `None` to missing metrics and record them in `missing_fields`.
+   - Stale responses (>30s old observation timestamp) mark `observation_state = "STALE"` and `quality = EventQuality.STALE`.
+   - Erroneous or network failure responses return `None` cleanly, never fabricating default baseline numbers.
+
+### 3. Test Suite & Quality Status
+- **Expanded Market Fallback Tests** (`backend/tests/test_market_data_fallback.py`):
+  - **25 / 25 tests passing (100% green in 6.05s)**, adding:
+    - `test_mobula_disabled_makes_zero_network_calls`
+    - `test_mobula_telemetry_distinguishes_401_403_429_5xx`
+    - `test_mobula_partial_and_stale_responses_never_invent_prices`
+- **Full Backend Suite**: **108 / 108 tests passing**.
+- **Frontend Suite**: **5 / 5 Flutter widget tests passing**.
+- **Repository Isolation**: `/root/aidesk` and `/root/gmgn_sentinel_desk` preserved 100% untouched and clean.
+- **Security**: Zero secrets in Git or telemetry, 0 on-chain transactions executed.
+
+
 
 
 

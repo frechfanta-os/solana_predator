@@ -734,3 +734,144 @@ async def test_mobula_cooldown_expiration_probing():
     mobula._last_failure_timestamp = time.time() - 65.0
     assert mobula.is_available is True  # Allowed to probe again
 
+
+# 23. MOBULA_ENABLED=false Makes Zero Network Calls
+@pytest.mark.asyncio
+async def test_mobula_disabled_makes_zero_network_calls():
+    # If a network call were attempted, session.get would raise
+    session_mock = MagicMock()
+    session_mock.get.side_effect = AssertionError("Network call attempted while disabled!")
+
+    mobula = MobulaMarketProvider(
+        api_key="sk-test-key",
+        enabled=False,
+        session=session_mock,
+    )
+    assert mobula.is_configured is False
+    assert mobula.is_available is False
+
+    # Attempt to query market data
+    ev = await mobula.get_token_market_data("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+    assert ev is None
+    assert mobula._call_count == 0
+    assert session_mock.get.call_count == 0
+
+    # Composite query also makes zero calls to mobula
+    dex_client = MagicMock()
+    dex_client.base_url = "https://api.dexscreener.com"
+    dex_client.get_tokens_pairs = AsyncMock(return_value=[])
+    dex_prov = DexScreenerProvider(client=dex_client)
+    comp = CompositeMarketDataProvider(mobula=mobula, dex_screener=dex_prov)
+
+    await comp.get_token_market_data("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
+    assert mobula._call_count == 0
+    assert session_mock.get.call_count == 0
+
+
+# 24. Telemetry Distinguishes 401, 403, 429, and 5xx Errors
+@pytest.mark.asyncio
+async def test_mobula_telemetry_distinguishes_401_403_429_5xx():
+    session_mock = MagicMock()
+    session_mock.closed = False
+
+    # A. Test 401 Unauthorized
+    session_mock.get.return_value = MockAiohttpResponse(401, '{"message":"Invalid API key","statusCode":401}')
+    mobula_401 = MobulaMarketProvider(api_key="sk-invalid-test-key", enabled=True, session=session_mock)
+    await mobula_401.get_token_market_data("Token111111111111111111111111111111111111111")
+    health_401 = await mobula_401.check_health()
+    assert "AUTH_OR_PLAN_RESTRICTED" in health_401["reason"]
+    assert "HTTP 401" in health_401["last_error"]
+    assert mobula_401.is_available is False
+
+    # B. Test 403 Forbidden (Free Plan Restriction)
+    session_mock.get.return_value = MockAiohttpResponse(403, '{"message":"API access is unavailable on the Free plan","statusCode":403}')
+    mobula_403 = MobulaMarketProvider(api_key="sk-valid-key-free-plan", enabled=True, session=session_mock)
+    await mobula_403.get_token_market_data("Token111111111111111111111111111111111111111")
+    health_403 = await mobula_403.check_health()
+    assert "AUTH_OR_PLAN_RESTRICTED" in health_403["reason"]
+    assert "HTTP 403" in health_403["last_error"]
+    assert "Free plan" in health_403["last_error"]
+    assert mobula_403.is_available is False
+
+    # C. Test 429 Rate Limit
+    session_mock.get.return_value = MockAiohttpResponse(429, '{"message":"Rate limit exceeded","statusCode":429}')
+    mobula_429 = MobulaMarketProvider(api_key="sk-rate-limited-key", enabled=True, session=session_mock)
+    mobula_429._max_retries = 0  # Fast execution in test
+    await mobula_429.get_token_market_data("Token111111111111111111111111111111111111111")
+    health_429 = await mobula_429.check_health()
+    assert "HTTP 429" in health_429["reason"]
+    assert "Rate limit exceeded" in health_429["last_error"]
+
+    # D. Test 502 / 5xx Server Error & Circuit Breaker
+    session_mock.get.return_value = MockAiohttpResponse(502, '{"message":"Bad Gateway"}')
+    mobula_502 = MobulaMarketProvider(api_key="sk-server-err-key", enabled=True, session=session_mock)
+    mobula_502._max_retries = 0
+    # Simulate 3 consecutive 5xx failures to trigger circuit open
+    for _ in range(3):
+        await mobula_502.get_token_market_data("Token111111111111111111111111111111111111111")
+    health_502 = await mobula_502.check_health()
+    assert "CONSECUTIVE_FAILURES_CIRCUIT_OPEN" in health_502["reason"]
+    assert "HTTP server error (502)" in health_502["last_error"]
+    assert mobula_502.is_available is False
+
+
+# 25. Partial, Stale, and Erroneous Responses Never Invent Prices
+@pytest.mark.asyncio
+async def test_mobula_partial_and_stale_responses_never_invent_prices():
+    session_mock = MagicMock()
+    session_mock.closed = False
+    now = time.time()
+
+    # Scenario 1: Partial payload with price but zero volume and zero liquidity
+    partial_payload = {
+        "data": {
+            "address": "TokenPartial111111111111111111111111111111",
+            "symbol": "PART",
+            "price": "0.12345",
+            # liquidity and volume missing
+            "liquidity": None,
+            "volume24h": None,
+            "updated_at": int(now - 5.0),
+        }
+    }
+    session_mock.get.return_value = MockAiohttpResponse(200, json.dumps(partial_payload))
+    mobula = MobulaMarketProvider(api_key="sk-test-key", enabled=True, session=session_mock)
+
+    ev1 = await mobula.get_token_market_data("TokenPartial111111111111111111111111111111")
+    assert ev1 is not None
+    assert ev1.price_usd == 0.12345
+    # Strict Invariant: Missing liquidity and volume are strictly None, never zeroed or fabricated!
+    assert ev1.liquidity_usd is None
+    assert ev1.volume_24h_usd is None
+    assert "liquidity_usd" in ev1.missing_fields
+    assert "volume_24h_usd" in ev1.missing_fields
+    assert ev1.observation_state == "MISSING"  # >= 2 missing fields qualifies as MISSING
+
+    # Scenario 2: Stale payload (observation timestamp 120s old)
+    stale_payload = {
+        "data": {
+            "address": "TokenStale1111111111111111111111111111111",
+            "symbol": "STALE",
+            "price": "2.50",
+            "liquidity": 100000.0,
+            "volume24h": 50000.0,
+            "updated_at": int(now - 120.0),  # 2 minutes old (> 30s threshold)
+        }
+    }
+    session_mock.get.return_value = MockAiohttpResponse(200, json.dumps(stale_payload))
+    ev2 = await mobula.get_token_market_data("TokenStale1111111111111111111111111111111")
+    assert ev2 is not None
+    assert ev2.observation_state == "STALE"
+    assert ev2.quality == EventQuality.STALE
+    assert ev2.freshness_seconds >= 120.0
+    # Values remain exact as observed, not modified
+    assert ev2.price_usd == 2.50
+
+    # Scenario 3: Complete network error returns None, zero fabricated event
+    session_mock.get.side_effect = Exception("Fatal socket disconnect")
+    mobula_failing = MobulaMarketProvider(api_key="sk-failing-key", enabled=True, session=session_mock)
+    mobula_failing._max_retries = 0
+    ev3 = await mobula_failing.get_token_market_data("TokenError1111111111111111111111111111111")
+    assert ev3 is None  # Absolutely no invented event or fallback price
+
+
