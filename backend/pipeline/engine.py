@@ -46,6 +46,7 @@ class PredatorEngine:
         exit_monitor: ExitMonitor,
         live_order_manager: Optional[Any] = None,
         learning_evaluator: Optional[Any] = None,
+        desk_coordinator: Optional[Any] = None,
         trading_mode: str = "PAPER",
     ):
         self.repository = repository
@@ -61,6 +62,7 @@ class PredatorEngine:
         self.exit_monitor = exit_monitor
         self.live_order_manager = live_order_manager
         self.learning_evaluator = learning_evaluator
+        self.desk_coordinator = desk_coordinator
         self.trading_mode = trading_mode
 
         # WebSocket broadcast hook
@@ -69,12 +71,16 @@ class PredatorEngine:
 
     def set_ws_broadcast_callback(self, callback: Callable[[Dict[str, Any]], Awaitable[None]]) -> None:
         self._ws_broadcast_callback = callback
+        if self.desk_coordinator:
+            self.desk_coordinator.set_ws_broadcast_callback(callback)
 
     async def initialize(self) -> None:
         """Startup sequence: position restoration, accounting reconciliation, event bus hook."""
         logger.info("Initializing SOLANA PREDATOR pipeline engine...")
         await self.positions.restore_from_db()
         await self.accounting.reconcile_on_startup()
+        if self.desk_coordinator:
+            await self.desk_coordinator.initialize()
         self.event_bus.subscribe(self.process_market_event)
         self._is_running = True
         logger.info("Pipeline engine ready. Starting event bus...")
@@ -85,6 +91,8 @@ class PredatorEngine:
         logger.info("Shutting down SOLANA PREDATOR pipeline engine...")
         self._is_running = False
         await self.event_bus.stop()
+        if self.desk_coordinator:
+            await self.desk_coordinator.shutdown()
         open_pos = self.positions.get_open_positions()
         await self.accounting.compute_snapshot(open_pos)
 
@@ -239,6 +247,22 @@ class PredatorEngine:
 
         fill_elapsed_ms = (time.perf_counter() - t_fill_start) * 1000.0
         self.health.latency_paper_fill.record(fill_elapsed_ms)
+
+        # Stage 7b: Multi-Desk Task & Structured Report Recording
+        if self.desk_coordinator:
+            try:
+                await self.desk_coordinator.record_pipeline_execution(event, consensus, agent_context)
+                await self.desk_coordinator._emit_ws(
+                    "paper.position.updated",
+                    {
+                        "cash_balance_usd": self.accounting.cash_balance,
+                        "open_positions": [p.model_dump() for p in self.positions.get_open_positions()],
+                    },
+                    desk_id="DESK_COMMAND",
+                    correlation_id=consensus.consensus_id,
+                )
+            except Exception as e:
+                logger.error("Error recording desk execution: %s", e)
 
         # Stage 8: Real-time WebSocket Broadcast
         t_ws_start = time.perf_counter()

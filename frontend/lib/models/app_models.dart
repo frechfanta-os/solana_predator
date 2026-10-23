@@ -240,3 +240,298 @@ class PortfolioSnapshotItem {
     );
   }
 }
+
+class DeskItem {
+  final String deskId;
+  final String name;
+  final String supervisor;
+  final String description;
+  final String status;
+  final bool isPaused;
+  final List<String> agents;
+  final double pollingIntervalSec;
+  final int activeTasks;
+  final int queuedTasks;
+  final int completedTasks;
+  final int failedTasks;
+  final int skippedTasks;
+  final int retryCount;
+  final double? lastExecutionAt;
+  final double lastDurationMs;
+  final String? lastSource;
+  final bool hasStaleData;
+  final bool hasMissingData;
+  final String? lastErrorCode;
+  final String? lastErrorMessage;
+
+  DeskItem({
+    required this.deskId,
+    required this.name,
+    required this.supervisor,
+    required this.description,
+    required this.status,
+    required this.isPaused,
+    required this.agents,
+    required this.pollingIntervalSec,
+    required this.activeTasks,
+    required this.queuedTasks,
+    required this.completedTasks,
+    required this.failedTasks,
+    required this.skippedTasks,
+    required this.retryCount,
+    this.lastExecutionAt,
+    required this.lastDurationMs,
+    this.lastSource,
+    required this.hasStaleData,
+    required this.hasMissingData,
+    this.lastErrorCode,
+    this.lastErrorMessage,
+  });
+
+  factory DeskItem.fromJson(Map<String, dynamic> json) {
+    return DeskItem(
+      deskId: json['desk_id'] ?? '',
+      name: json['name'] ?? '',
+      supervisor: json['supervisor'] ?? '',
+      description: json['description'] ?? '',
+      status: json['status'] ?? 'IDLE',
+      isPaused: json['is_paused'] == 1 || json['is_paused'] == true,
+      agents: (json['agents'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+      pollingIntervalSec: (json['polling_interval_sec'] as num?)?.toDouble() ?? 15.0,
+      activeTasks: (json['active_tasks'] as num?)?.toInt() ?? 0,
+      queuedTasks: (json['queued_tasks'] as num?)?.toInt() ?? 0,
+      completedTasks: (json['completed_tasks'] as num?)?.toInt() ?? 0,
+      failedTasks: (json['failed_tasks'] as num?)?.toInt() ?? 0,
+      skippedTasks: (json['skipped_tasks'] as num?)?.toInt() ?? 0,
+      retryCount: (json['retry_count'] as num?)?.toInt() ?? 0,
+      lastExecutionAt: (json['last_execution_at'] as num?)?.toDouble(),
+      lastDurationMs: (json['last_duration_ms'] as num?)?.toDouble() ?? 0.0,
+      lastSource: json['last_source'],
+      hasStaleData: json['has_stale_data'] == 1 || json['has_stale_data'] == true,
+      hasMissingData: json['has_missing_data'] == 1 || json['has_missing_data'] == true,
+      lastErrorCode: json['last_error_code'],
+      lastErrorMessage: json['last_error_message'],
+    );
+  }
+}
+
+class DeskTaskItem {
+  final String taskId;
+  final String eventId;
+  final String deskId;
+  final String agentId;
+  final double startedAt;
+  final double? finishedAt;
+  final double durationMs;
+  final String status;
+  final String source;
+  final double? sourceTimestamp;
+  final String observationQuality;
+  final String inputSummary;
+  final String outputSummary;
+  final List<String> missingFields;
+  final String? errorCode;
+  final String? errorMessageSanitized;
+  final double? confidence;
+  final String? promptVersion;
+  final String? modelId;
+
+  DeskTaskItem({
+    required this.taskId,
+    required this.eventId,
+    required this.deskId,
+    required this.agentId,
+    required this.startedAt,
+    this.finishedAt,
+    required this.durationMs,
+    required this.status,
+    required this.source,
+    this.sourceTimestamp,
+    required this.observationQuality,
+    required this.inputSummary,
+    required this.outputSummary,
+    required this.missingFields,
+    this.errorCode,
+    this.errorMessageSanitized,
+    this.confidence,
+    this.promptVersion,
+    this.modelId,
+  });
+
+  factory DeskTaskItem.fromJson(Map<String, dynamic> json) {
+    return DeskTaskItem(
+      taskId: json['task_id'] ?? '',
+      eventId: json['event_id'] ?? '',
+      deskId: json['desk_id'] ?? '',
+      agentId: json['agent_id'] ?? '',
+      startedAt: (json['started_at'] as num?)?.toDouble() ?? 0.0,
+      finishedAt: (json['finished_at'] as num?)?.toDouble(),
+      durationMs: (json['duration_ms'] as num?)?.toDouble() ?? 0.0,
+      status: json['status'] ?? 'COMPLETED',
+      source: json['source'] ?? 'INTERNAL',
+      sourceTimestamp: (json['source_timestamp'] as num?)?.toDouble(),
+      observationQuality: json['observation_quality'] ?? 'ACCEPTABLE',
+      inputSummary: json['input_summary'] ?? '',
+      outputSummary: json['output_summary'] ?? '',
+      missingFields: (json['missing_fields'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+      errorCode: json['error_code'],
+      errorMessageSanitized: json['error_message_sanitized'],
+      confidence: (json['confidence'] as num?)?.toDouble(),
+      promptVersion: json['prompt_version'],
+      modelId: json['model_id'],
+    );
+  }
+}
+
+class DeskReportItem {
+  final String reportId;
+  final String deskId;
+  final String supervisor;
+  final String agentId;
+  final String? tokenMint;
+  final String eventId;
+  final String taskId;
+  final double observedAt;
+  final double? sourceTimestamp;
+  final double createdAt;
+  final String source;
+  final String observationQuality;
+  final List<String> observedFacts;
+  final List<String> inferredConclusions;
+  final List<String> unknownOrMissing;
+  final List<String> contradictions;
+  final List<String> riskFlags;
+  final String decision;
+  final double? confidence;
+  final String rationale;
+  final bool isStale;
+  final bool isVeto;
+  final Map<String, dynamic> metadata;
+
+  DeskReportItem({
+    required this.reportId,
+    required this.deskId,
+    required this.supervisor,
+    required this.agentId,
+    this.tokenMint,
+    required this.eventId,
+    required this.taskId,
+    required this.observedAt,
+    this.sourceTimestamp,
+    required this.createdAt,
+    required this.source,
+    required this.observationQuality,
+    required this.observedFacts,
+    required this.inferredConclusions,
+    required this.unknownOrMissing,
+    required this.contradictions,
+    required this.riskFlags,
+    required this.decision,
+    this.confidence,
+    required this.rationale,
+    required this.isStale,
+    required this.isVeto,
+    required this.metadata,
+  });
+
+  factory DeskReportItem.fromJson(Map<String, dynamic> json) {
+    return DeskReportItem(
+      reportId: json['report_id'] ?? '',
+      deskId: json['desk_id'] ?? '',
+      supervisor: json['supervisor'] ?? '',
+      agentId: json['agent_id'] ?? '',
+      tokenMint: json['token_mint'],
+      eventId: json['event_id'] ?? '',
+      taskId: json['task_id'] ?? '',
+      observedAt: (json['observed_at'] as num?)?.toDouble() ?? 0.0,
+      sourceTimestamp: (json['source_timestamp'] as num?)?.toDouble(),
+      createdAt: (json['created_at'] as num?)?.toDouble() ?? 0.0,
+      source: json['source'] ?? 'INTERNAL',
+      observationQuality: json['observation_quality'] ?? 'ACCEPTABLE',
+      observedFacts: (json['observed_facts'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+      inferredConclusions: (json['inferred_conclusions'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+      unknownOrMissing: (json['unknown_or_missing'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+      contradictions: (json['contradictions'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+      riskFlags: (json['risk_flags'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+      decision: json['decision'] ?? 'PASS',
+      confidence: (json['confidence'] as num?)?.toDouble(),
+      rationale: json['rationale'] ?? '',
+      isStale: json['is_stale'] == 1 || json['is_stale'] == true,
+      isVeto: json['is_veto'] == 1 || json['is_veto'] == true,
+      metadata: (json['metadata'] as Map<String, dynamic>?) ?? {},
+    );
+  }
+}
+
+class AgentStatusItem {
+  final String agentId;
+  final String deskId;
+  final String status;
+  final int activeTasks;
+  final int completedTasks;
+  final int failedTasks;
+  final double? lastExecutionAt;
+  final double lastDurationMs;
+  final String? lastDecision;
+  final double? lastConfidence;
+  final int modelUsageCount;
+  final String? lastError;
+
+  AgentStatusItem({
+    required this.agentId,
+    required this.deskId,
+    required this.status,
+    required this.activeTasks,
+    required this.completedTasks,
+    required this.failedTasks,
+    this.lastExecutionAt,
+    required this.lastDurationMs,
+    this.lastDecision,
+    this.lastConfidence,
+    required this.modelUsageCount,
+    this.lastError,
+  });
+
+  factory AgentStatusItem.fromJson(Map<String, dynamic> json) {
+    return AgentStatusItem(
+      agentId: json['agent_id'] ?? '',
+      deskId: json['desk_id'] ?? '',
+      status: json['status'] ?? 'IDLE',
+      activeTasks: (json['active_tasks'] as num?)?.toInt() ?? 0,
+      completedTasks: (json['completed_tasks'] as num?)?.toInt() ?? 0,
+      failedTasks: (json['failed_tasks'] as num?)?.toInt() ?? 0,
+      lastExecutionAt: (json['last_execution_at'] as num?)?.toDouble(),
+      lastDurationMs: (json['last_duration_ms'] as num?)?.toDouble() ?? 0.0,
+      lastDecision: json['last_decision'],
+      lastConfidence: (json['last_confidence'] as num?)?.toDouble(),
+      modelUsageCount: (json['model_usage_count'] as num?)?.toInt() ?? 0,
+      lastError: json['last_error'],
+    );
+  }
+}
+
+class WatchlistItemModel {
+  final String identifier;
+  final String itemType;
+  final String? label;
+  final double addedAt;
+  final String? notes;
+
+  WatchlistItemModel({
+    required this.identifier,
+    required this.itemType,
+    this.label,
+    required this.addedAt,
+    this.notes,
+  });
+
+  factory WatchlistItemModel.fromJson(Map<String, dynamic> json) {
+    return WatchlistItemModel(
+      identifier: json['identifier'] ?? '',
+      itemType: json['item_type'] ?? 'TOKEN',
+      label: json['label'],
+      addedAt: (json['added_at'] as num?)?.toDouble() ?? 0.0,
+      notes: json['notes'],
+    );
+  }
+}

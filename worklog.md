@@ -658,3 +658,59 @@ export LLM_API_KEY="<your_glm_api_key>"
 - **Protected Repositories**: `/root/aidesk` and `/root/gmgn_sentinel_desk` verified clean and untouched.
 
 
+---
+
+## Phase 13: Multi-Desk Market-Intelligence Terminal & Workstation Transformation (2026-10-23)
+
+### 1. Initial Audit & Architecture Specification (Phase A)
+- **Starting Commit**: `e186bea` on branch `main`.
+- **Protected Repositories Verified**: `/root/aidesk` and `/root/gmgn_sentinel_desk` inspected and confirmed 100% untouched and clean.
+- **Architectural Deliverable**: Created `docs/MULTI_DESK_ARCHITECTURE.md` documenting:
+  - Before/After architectural map and six specialized operational desks (`DESK_MARKET`, `DESK_WHALE`, `DESK_INVESTIGATION`, `DESK_QUANT`, `DESK_RISK`, `DESK_COMMAND`).
+  - Complete responsibility matrix mapping all 9 existing deterministic agents (`SCAN`, `WHALE`, `VET`, `QUANT`, `SKEPTIC`, `SIZE`, `RISK`, `CHIEF`, `AUDIT`) to their respective desks.
+  - Mermaid end-to-end event and consensus flow diagram.
+  - SQLite Schema V4 specification and REST + WebSocket `/ws/live` protocol.
+
+### 2. Backend Data Contracts & SQLite Schema V4 Persistence (Phase B)
+- Created `backend/models/desk.py` and exported in `backend/models/__init__.py`:
+  - `DeskId` (`DESK_MARKET`, `DESK_WHALE`, `DESK_INVESTIGATION`, `DESK_QUANT`, `DESK_RISK`, `DESK_COMMAND`).
+  - `ExecutionState` (`IDLE`, `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `SKIPPED`, `DEGRADED`, `PAUSED`).
+  - `AgentTaskExecution`, `StructuredAgentReport` (explicit separation of `observed_facts`, `inferred_conclusions`, `unknown_or_missing`, `contradictions`, `risk_flags`), `DeskStatusRecord`, `WatchlistItem`, `TerminalWsEnvelope`.
+- Added `SCHEMA_V4` in `backend/database/schema.py` (`desks`, `desk_tasks`, `desk_reports`, `watchlist_items`, `health_transitions`) and bumped `CURRENT_SCHEMA_VERSION = 4` in `backend/database/migrations.py`.
+- Implemented thread-safe persistence and query methods in `backend/database/repository.py` with automatic 2,000-row retention pruning on `desk_tasks`, `desk_reports`, and `health_transitions`.
+
+### 3. Multi-Desk Coordinator, Scheduler & REST/WebSocket API (Phases C & D)
+- Implemented `MultiDeskCoordinator` in `backend/desks/coordinator.py`:
+  - Orchestrates real asynchronous execution across all 6 desks using the existing deterministic agents without fabricating market data.
+  - Supports per-desk `pause`, `resume`, and on-demand `run` (including single-token forensics on `DESK_INVESTIGATION`).
+  - Preserves the authoritative, non-overridable `RISK` veto (`DESK_RISK`) and persistent SQLite Emergency Kill-Switch.
+  - Broadcasts structured `TerminalWsEnvelope` payloads (`DESK_STATUS`, `AGENT_TASK_STARTED`, `AGENT_TASK_FINISHED`, `AGENT_REPORT`, `RISK_VETO`, `SYSTEM_HEALTH`) over `/ws` and `/ws/live`.
+- Added REST endpoints in `backend/api/routes.py`:
+  - `GET /api/desks`, `GET /api/desks/{desk_id}`, `GET /api/desks/{desk_id}/agents`, `GET /api/desks/{desk_id}/tasks`, `GET /api/desks/{desk_id}/reports`
+  - `POST /api/desks/{desk_id}/pause`, `POST /api/desks/{desk_id}/resume`, `POST /api/desks/{desk_id}/run`
+  - `GET /api/agents`, `GET /api/agents/{agent_id}`, `GET /api/agents/{agent_id}/tasks`
+  - `GET /api/watchlist`, `POST /api/watchlist`, `DELETE /api/watchlist/{token_mint}`
+  - `GET /api/system/health`
+
+### 4. Flutter 10-Destination Multi-Desk Workstation UI (Phases E, F, G)
+- Updated `frontend/lib/models/app_models.dart` and `frontend/lib/providers/app_providers.dart` with Multi-Desk state management, REST integration, and `/ws/live` envelope deduplication.
+- Created reusable workstation components in `frontend/lib/views/desk_components.dart` (`DeskWorkspaceHeader`, `StaleOrMissingWarningBanner`, `StructuredReportCard`, `DeskTaskExecutionList`).
+- Implemented/enhanced the 10 workstation destinations wired in `frontend/lib/main.dart`:
+  1. `CommandCenterView` (Desk 6: Command Center)
+  2. `MarketOverviewView` (Desk 1: Market Intelligence)
+  3. `WhaleActivityView` (Desk 2: Whale Intelligence)
+  4. `TokenInvestigationView` (Desk 3: Token Investigation)
+  5. `LearningView` (Desk 4: Quant Research)
+  6. `RiskSkepticView` (Desk 5: Risk & Skeptic)
+  7. `PaperPortfolioView` (Paper Portfolio)
+  8. `AgentDecisionsView` (Agent Activity)
+  9. `DataSourcesView` (Data Sources)
+  10. `ConfigRiskView` (Settings)
+- Explicitly badged `LiveTradingView` with `"DRY-RUN / NOT OPERATIONAL FOR MAINNET"`.
+
+### 5. Empirical Verification & Quality Results (Phases H & I)
+- **Backend Pytest Suite (`python3 -m pytest backend/tests/ -v`)**: **116 / 116 passed (100% green)** (including 5 new multi-desk integration tests in `backend/tests/test_multi_desk_workstation.py`).
+- **Frontend Static Analysis (`flutter analyze`)**: **0 issues found**.
+- **Frontend Widget Tests (`flutter test`)**: **8 / 8 passed (100% green)**.
+- **Protected Repositories**: `/root/aidesk` and `/root/gmgn_sentinel_desk` verified 100% untouched and clean.
+- **Safety Invariants**: Zero private keys, zero secrets in Git, zero on-chain transactions signed or broadcast (`ALLOW_TRANSACTION_SUBMISSION=False`).

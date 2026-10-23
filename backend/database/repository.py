@@ -101,9 +101,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    # --- Token Registry & Lifecycle ---
+        return await asyncio.to_thread(_op)    # --- Token Registry & Lifecycle ---
 
     async def upsert_token(self, token: TokenMetadata, initial_state: str = "DISCOVERED") -> bool:
         async with self._lock:
@@ -179,9 +177,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    # --- Token Snapshots ---
+        return await asyncio.to_thread(_op)    # --- Token Snapshots ---
 
     async def save_token_snapshot(self, snapshot: TokenSnapshot) -> None:
         async with self._lock:
@@ -272,9 +268,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    # --- Agent Decisions ---
+        return await asyncio.to_thread(_op)    # --- Agent Decisions ---
 
     async def save_agent_decision(self, consensus_id: str, token_mint: str, result: AgentResult) -> None:
         async with self._lock:
@@ -324,9 +318,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    # --- Paper Orders, Fills, Positions, Portfolio ---
+        return await asyncio.to_thread(_op)    # --- Paper Orders, Fills, Positions, Portfolio ---
 
     async def save_paper_order(self, order: PaperOrder) -> None:
         async with self._lock:
@@ -454,9 +446,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    async def get_all_positions(self) -> List[PaperPosition]:
+        return await asyncio.to_thread(_op)    async def get_all_positions(self) -> List[PaperPosition]:
         def _op():
             conn = self._get_connection()
             try:
@@ -488,9 +478,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    async def save_portfolio_snapshot(self, snap: PortfolioSnapshot) -> None:
+        return await asyncio.to_thread(_op)    async def save_portfolio_snapshot(self, snap: PortfolioSnapshot) -> None:
         async with self._lock:
             def _op():
                 conn = self._get_connection()
@@ -549,9 +537,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    async def get_portfolio_history(self, limit: int = 100) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(_op)    async def get_portfolio_history(self, limit: int = 100) -> List[Dict[str, Any]]:
         def _op():
             conn = self._get_connection()
             try:
@@ -562,9 +548,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    async def log_system_event(self, event_id: str, event_type: str, severity: str, message: str, details: Optional[Dict[str, Any]] = None) -> None:
+        return await asyncio.to_thread(_op)    async def log_system_event(self, event_id: str, event_type: str, severity: str, message: str, details: Optional[Dict[str, Any]] = None) -> None:
         async with self._lock:
             def _op():
                 conn = self._get_connection()
@@ -663,9 +647,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    # --- Step 3: Measurable Learning & Strategy Benchmarks ---
+        return await asyncio.to_thread(_op)    # --- Step 3: Measurable Learning & Strategy Benchmarks ---
 
     async def save_decision_outcome(self, outcome: Any) -> None:
         async with self._lock:
@@ -724,9 +706,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    async def save_strategy_benchmark(self, bench: Any) -> None:
+        return await asyncio.to_thread(_op)    async def save_strategy_benchmark(self, bench: Any) -> None:
         async with self._lock:
             def _op():
                 conn = self._get_connection()
@@ -770,9 +750,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    # --- Step 4: Live Trading Proposals, Transactions & Risk Audit ---
+        return await asyncio.to_thread(_op)    # --- Step 4: Live Trading Proposals, Transactions & Risk Audit ---
 
     async def save_live_proposal(self, p: Dict[str, Any]) -> None:
         async with self._lock:
@@ -832,9 +810,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    async def update_live_proposal_status(self, proposal_id: str, status: str, rejection_reason: Optional[str] = None) -> None:
+        return await asyncio.to_thread(_op)    async def update_live_proposal_status(self, proposal_id: str, status: str, rejection_reason: Optional[str] = None) -> None:
         async with self._lock:
             def _op():
                 conn = self._get_connection()
@@ -910,9 +886,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    async def log_risk_audit(
+        return await asyncio.to_thread(_op)    async def log_risk_audit(
         self,
         proposal_id: Optional[str],
         check_name: str,
@@ -967,9 +941,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    async def get_token_market_events(self, token_mint: str, start_time: Optional[float] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(_op)    async def get_token_market_events(self, token_mint: str, start_time: Optional[float] = None, limit: int = 100) -> List[Dict[str, Any]]:
         def _op():
             conn = self._get_connection()
             try:
@@ -989,9 +961,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    # --- System Config & Persistent Flags ---
+        return await asyncio.to_thread(_op)    # --- System Config & Persistent Flags ---
 
     async def get_system_config(self, key: str) -> Optional[str]:
         """Fetch persistent configuration or operator flag by key."""
@@ -1006,9 +976,7 @@ class Repository:
             finally:
                 conn.close()
 
-        return await asyncio.to_thread(_op)
-
-    async def set_system_config(self, key: str, value: str) -> None:
+        return await asyncio.to_thread(_op)    async def set_system_config(self, key: str, value: str) -> None:
         """Persist system configuration or operator flag (e.g. emergency kill switch)."""
         async with self._lock:
             def _op():
@@ -1024,3 +992,355 @@ class Repository:
 
             await asyncio.to_thread(_op)
 
+    # --- Multi-Desk Workstation Persistence (Schema V4) ---
+
+    async def upsert_desk_status(self, desk: Any) -> None:
+        """Idempotently persist desk status and execution counters."""
+        async with self._lock:
+            def _op():
+                conn = self._get_connection()
+                try:
+                    with conn:
+                        conn.execute("""
+                            INSERT OR REPLACE INTO desks (
+                                desk_id, name, supervisor, description, status, is_paused,
+                                agents_json, polling_interval_sec, active_tasks, queued_tasks,
+                                completed_tasks, failed_tasks, skipped_tasks, retry_count,
+                                last_execution_at, last_duration_ms, last_source,
+                                has_stale_data, has_missing_data, last_error_code,
+                                last_error_message, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            desk.desk_id.value if hasattr(desk.desk_id, "value") else str(desk.desk_id),
+                            desk.name,
+                            desk.supervisor,
+                            desk.description,
+                            desk.status.value if hasattr(desk.status, "value") else str(desk.status),
+                            1 if desk.is_paused else 0,
+                            json.dumps(desk.agents),
+                            desk.polling_interval_sec,
+                            desk.active_tasks,
+                            desk.queued_tasks,
+                            desk.completed_tasks,
+                            desk.failed_tasks,
+                            desk.skipped_tasks,
+                            desk.retry_count,
+                            desk.last_execution_at,
+                            desk.last_duration_ms,
+                            desk.last_source,
+                            1 if desk.has_stale_data else 0,
+                            1 if desk.has_missing_data else 0,
+                            desk.last_error_code,
+                            desk.last_error_message,
+                            time.time(),
+                        ))
+                finally:
+                    conn.close()
+
+            await asyncio.to_thread(_op)
+
+    async def get_all_desks(self) -> List[Dict[str, Any]]:
+        def _op():
+            conn = self._get_connection()
+            try:
+                cursor = conn.execute("SELECT * FROM desks ORDER BY desk_id ASC")
+                out = []
+                for r in cursor.fetchall():
+                    item = dict(r)
+                    item["is_paused"] = bool(item.get("is_paused"))
+                    item["has_stale_data"] = bool(item.get("has_stale_data"))
+                    item["has_missing_data"] = bool(item.get("has_missing_data"))
+                    item["agents"] = json.loads(item["agents_json"]) if item.get("agents_json") else []
+                    out.append(item)
+                return out
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_op)    async def get_desk_status(self, desk_id: str) -> Optional[Dict[str, Any]]:
+        def _op():
+            conn = self._get_connection()
+            try:
+                cursor = conn.execute("SELECT * FROM desks WHERE desk_id = ?", (desk_id,))
+                r = cursor.fetchone()
+                if not r:
+                    return None
+                item = dict(r)
+                item["is_paused"] = bool(item.get("is_paused"))
+                item["has_stale_data"] = bool(item.get("has_stale_data"))
+                item["has_missing_data"] = bool(item.get("has_missing_data"))
+                item["agents"] = json.loads(item["agents_json"]) if item.get("agents_json") else []
+                return item
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_op)    async def save_desk_task(self, task: Any, max_retention: int = 2000) -> None:
+        """Idempotently save a task execution record with bounded telemetry retention."""
+        async with self._lock:
+            def _op():
+                conn = self._get_connection()
+                try:
+                    with conn:
+                        conn.execute("""
+                            INSERT OR REPLACE INTO desk_tasks (
+                                task_id, event_id, desk_id, agent_id, started_at, finished_at,
+                                duration_ms, status, source, source_timestamp, observation_quality,
+                                input_summary, output_summary, missing_fields_json,
+                                error_code, error_message_sanitized, confidence, prompt_version, model_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            task.task_id,
+                            task.event_id,
+                            task.desk_id.value if hasattr(task.desk_id, "value") else str(task.desk_id),
+                            task.agent_id,
+                            task.started_at,
+                            task.finished_at,
+                            task.duration_ms,
+                            task.status.value if hasattr(task.status, "value") else str(task.status),
+                            task.source,
+                            task.source_timestamp,
+                            task.observation_quality,
+                            task.input_summary,
+                            task.output_summary,
+                            json.dumps(task.missing_fields),
+                            task.error_code,
+                            task.error_message_sanitized,
+                            task.confidence,
+                            task.prompt_version,
+                            task.model_id,
+                        ))
+                        # Retention pruning if table exceeds max_retention
+                        cursor = conn.execute("SELECT COUNT(*) FROM desk_tasks")
+                        cnt = cursor.fetchone()[0]
+                        if cnt > max_retention:
+                            conn.execute("""
+                                DELETE FROM desk_tasks WHERE task_id IN (
+                                    SELECT task_id FROM desk_tasks ORDER BY started_at ASC LIMIT ?
+                                )
+                            """, (cnt - max_retention,))
+                finally:
+                    conn.close()
+
+            await asyncio.to_thread(_op)
+
+    async def get_desk_tasks(
+        self,
+        desk_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        def _op():
+            conn = self._get_connection()
+            try:
+                if desk_id and agent_id:
+                    cursor = conn.execute("""
+                        SELECT * FROM desk_tasks WHERE desk_id = ? AND agent_id = ?
+                        ORDER BY started_at DESC LIMIT ?
+                    """, (desk_id, agent_id, limit))
+                elif desk_id:
+                    cursor = conn.execute("""
+                        SELECT * FROM desk_tasks WHERE desk_id = ?
+                        ORDER BY started_at DESC LIMIT ?
+                    """, (desk_id, limit))
+                elif agent_id:
+                    cursor = conn.execute("""
+                        SELECT * FROM desk_tasks WHERE agent_id = ?
+                        ORDER BY started_at DESC LIMIT ?
+                    """, (agent_id, limit))
+                else:
+                    cursor = conn.execute("""
+                        SELECT * FROM desk_tasks ORDER BY started_at DESC LIMIT ?
+                    """, (limit,))
+                out = []
+                for r in cursor.fetchall():
+                    item = dict(r)
+                    item["missing_fields"] = (
+                        json.loads(item["missing_fields_json"]) if item.get("missing_fields_json") else []
+                    )
+                    out.append(item)
+                return out
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_op)    async def save_desk_report(self, report: Any, max_retention: int = 2000) -> None:
+        """Idempotently save a structured agent report with bounded telemetry retention."""
+        async with self._lock:
+            def _op():
+                conn = self._get_connection()
+                try:
+                    with conn:
+                        conn.execute("""
+                            INSERT OR REPLACE INTO desk_reports (
+                                report_id, desk_id, supervisor, agent_id, token_mint,
+                                event_id, task_id, observed_at, source_timestamp, created_at,
+                                source, observation_quality, observed_facts_json,
+                                inferred_conclusions_json, unknown_or_missing_json,
+                                contradictions_json, risk_flags_json, decision,
+                                confidence, rationale, is_stale, is_veto, metadata_json
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            report.report_id,
+                            report.desk_id.value if hasattr(report.desk_id, "value") else str(report.desk_id),
+                            report.supervisor,
+                            report.agent_id,
+                            report.token_mint,
+                            report.event_id,
+                            report.task_id,
+                            report.observed_at,
+                            report.source_timestamp,
+                            report.created_at,
+                            report.source,
+                            report.observation_quality,
+                            json.dumps(report.observed_facts),
+                            json.dumps(report.inferred_conclusions),
+                            json.dumps(report.unknown_or_missing),
+                            json.dumps(report.contradictions),
+                            json.dumps(report.risk_flags),
+                            report.decision,
+                            report.confidence,
+                            report.rationale,
+                            1 if report.is_stale else 0,
+                            1 if report.is_veto else 0,
+                            json.dumps(report.metadata),
+                        ))
+                        cursor = conn.execute("SELECT COUNT(*) FROM desk_reports")
+                        cnt = cursor.fetchone()[0]
+                        if cnt > max_retention:
+                            conn.execute("""
+                                DELETE FROM desk_reports WHERE report_id IN (
+                                    SELECT report_id FROM desk_reports ORDER BY created_at ASC LIMIT ?
+                                )
+                            """, (cnt - max_retention,))
+                finally:
+                    conn.close()
+
+            await asyncio.to_thread(_op)
+
+    async def get_desk_reports(
+        self,
+        desk_id: Optional[str] = None,
+        token_mint: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        def _op():
+            conn = self._get_connection()
+            try:
+                if desk_id and token_mint:
+                    cursor = conn.execute("""
+                        SELECT * FROM desk_reports WHERE desk_id = ? AND token_mint = ?
+                        ORDER BY created_at DESC LIMIT ?
+                    """, (desk_id, token_mint, limit))
+                elif desk_id:
+                    cursor = conn.execute("""
+                        SELECT * FROM desk_reports WHERE desk_id = ?
+                        ORDER BY created_at DESC LIMIT ?
+                    """, (desk_id, limit))
+                elif token_mint:
+                    cursor = conn.execute("""
+                        SELECT * FROM desk_reports WHERE token_mint = ?
+                        ORDER BY created_at DESC LIMIT ?
+                    """, (token_mint, limit))
+                else:
+                    cursor = conn.execute("""
+                        SELECT * FROM desk_reports ORDER BY created_at DESC LIMIT ?
+                    """, (limit,))
+                out = []
+                for r in cursor.fetchall():
+                    item = dict(r)
+                    item["is_stale"] = bool(item.get("is_stale"))
+                    item["is_veto"] = bool(item.get("is_veto"))
+                    for field in ("observed_facts", "inferred_conclusions", "unknown_or_missing", "contradictions", "risk_flags", "metadata"):
+                        jk = f"{field}_json"
+                        if item.get(jk):
+                            item[field] = json.loads(item[jk])
+                        else:
+                            item[field] = {} if field == "metadata" else []
+                    out.append(item)
+                return out
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_op)    async def upsert_watchlist_item(self, item: Any) -> None:
+        async with self._lock:
+            def _op():
+                conn = self._get_connection()
+                try:
+                    with conn:
+                        conn.execute("""
+                            INSERT OR REPLACE INTO watchlist_items (
+                                identifier, item_type, label, added_at, notes
+                            ) VALUES (?, ?, ?, ?, ?)
+                        """, (
+                            item.identifier,
+                            item.item_type,
+                            item.label,
+                            item.added_at,
+                            item.notes,
+                        ))
+                finally:
+                    conn.close()
+
+            await asyncio.to_thread(_op)
+
+    async def delete_watchlist_item(self, identifier: str) -> bool:
+        async with self._lock:
+            def _op():
+                conn = self._get_connection()
+                try:
+                    with conn:
+                        cursor = conn.execute("DELETE FROM watchlist_items WHERE identifier = ?", (identifier,))
+                        return cursor.rowcount > 0
+                finally:
+                    conn.close()
+
+            return await asyncio.to_thread(_op)
+
+    async def get_watchlist_items(self, item_type: Optional[str] = None) -> List[Dict[str, Any]]:
+        def _op():
+            conn = self._get_connection()
+            try:
+                if item_type:
+                    cursor = conn.execute(
+                        "SELECT * FROM watchlist_items WHERE item_type = ? ORDER BY added_at DESC",
+                        (item_type,),
+                    )
+                else:
+                    cursor = conn.execute("SELECT * FROM watchlist_items ORDER BY added_at DESC")
+                return [dict(r) for r in cursor.fetchall()]
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_op)    async def log_health_transition(
+        self,
+        component: str,
+        from_state: Optional[str],
+        to_state: str,
+        reason: Optional[str] = None,
+    ) -> None:
+        async with self._lock:
+            def _op():
+                conn = self._get_connection()
+                try:
+                    with conn:
+                        conn.execute("""
+                            INSERT INTO health_transitions (
+                                component, from_state, to_state, reason, timestamp
+                            ) VALUES (?, ?, ?, ?, ?)
+                        """, (component, from_state, to_state, reason, time.time()))
+                finally:
+                    conn.close()
+
+            await asyncio.to_thread(_op)
+
+    async def get_health_transitions(self, limit: int = 50) -> List[Dict[str, Any]]:
+        def _op():
+            conn = self._get_connection()
+            try:
+                cursor = conn.execute(
+                    "SELECT * FROM health_transitions ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                )
+                return [dict(r) for r in cursor.fetchall()]
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(_op)

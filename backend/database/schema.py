@@ -345,3 +345,107 @@ CREATE TABLE IF NOT EXISTS system_config (
 );
 """
 
+
+SCHEMA_V4 = """
+-- Multi-Desk Operational Metadata & State
+CREATE TABLE IF NOT EXISTS desks (
+    desk_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    supervisor TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'IDLE',
+    is_paused INTEGER NOT NULL DEFAULT 0,
+    agents_json TEXT NOT NULL,
+    polling_interval_sec REAL NOT NULL DEFAULT 15.0,
+    active_tasks INTEGER NOT NULL DEFAULT 0,
+    queued_tasks INTEGER NOT NULL DEFAULT 0,
+    completed_tasks INTEGER NOT NULL DEFAULT 0,
+    failed_tasks INTEGER NOT NULL DEFAULT 0,
+    skipped_tasks INTEGER NOT NULL DEFAULT 0,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    last_execution_at REAL,
+    last_duration_ms REAL NOT NULL DEFAULT 0.0,
+    last_source TEXT,
+    has_stale_data INTEGER NOT NULL DEFAULT 0,
+    has_missing_data INTEGER NOT NULL DEFAULT 0,
+    last_error_code TEXT,
+    last_error_message TEXT,
+    updated_at REAL NOT NULL
+);
+
+-- Agent Task Execution Records
+CREATE TABLE IF NOT EXISTS desk_tasks (
+    task_id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    desk_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    finished_at REAL,
+    duration_ms REAL NOT NULL DEFAULT 0.0,
+    status TEXT NOT NULL,
+    source TEXT NOT NULL,
+    source_timestamp REAL,
+    observation_quality TEXT NOT NULL,
+    input_summary TEXT NOT NULL,
+    output_summary TEXT NOT NULL,
+    missing_fields_json TEXT NOT NULL,
+    error_code TEXT,
+    error_message_sanitized TEXT,
+    confidence REAL,
+    prompt_version TEXT,
+    model_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_desk_tasks_desk ON desk_tasks(desk_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_desk_tasks_agent ON desk_tasks(agent_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_desk_tasks_status ON desk_tasks(status);
+
+-- Structured Agent Reports (Facts vs Inferences vs Missing Data)
+CREATE TABLE IF NOT EXISTS desk_reports (
+    report_id TEXT PRIMARY KEY,
+    desk_id TEXT NOT NULL,
+    supervisor TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    token_mint TEXT,
+    event_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    observed_at REAL NOT NULL,
+    source_timestamp REAL,
+    created_at REAL NOT NULL,
+    source TEXT NOT NULL,
+    observation_quality TEXT NOT NULL,
+    observed_facts_json TEXT NOT NULL,
+    inferred_conclusions_json TEXT NOT NULL,
+    unknown_or_missing_json TEXT NOT NULL,
+    contradictions_json TEXT NOT NULL,
+    risk_flags_json TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    confidence REAL,
+    rationale TEXT NOT NULL,
+    is_stale INTEGER NOT NULL DEFAULT 0,
+    is_veto INTEGER NOT NULL DEFAULT 0,
+    metadata_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_desk_reports_desk ON desk_reports(desk_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_desk_reports_mint ON desk_reports(token_mint, created_at DESC);
+
+-- Watchlist for Tokens (Desk 1) & Public Wallets (Desk 2)
+CREATE TABLE IF NOT EXISTS watchlist_items (
+    identifier TEXT PRIMARY KEY,
+    item_type TEXT NOT NULL DEFAULT 'TOKEN',
+    label TEXT,
+    added_at REAL NOT NULL,
+    notes TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_watchlist_type ON watchlist_items(item_type);
+
+-- Provider & Subsystem Health Transitions
+CREATE TABLE IF NOT EXISTS health_transitions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    component TEXT NOT NULL,
+    from_state TEXT,
+    to_state TEXT NOT NULL,
+    reason TEXT,
+    timestamp REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_health_transitions_comp ON health_transitions(component, timestamp DESC);
+"""

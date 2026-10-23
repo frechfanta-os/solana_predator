@@ -122,10 +122,14 @@ class _LiveTradingViewState extends ConsumerState<LiveTradingView> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: AppTheme.warningAmber.withValues(alpha: 0.2),
+                      color: AppTheme.dangerRed.withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: AppTheme.dangerRed.withValues(alpha: 0.6)),
                     ),
-                    child: const Text("MAINNET-BETA", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppTheme.warningAmber)),
+                    child: const Text(
+                      "DRY-RUN / NOT OPERATIONAL FOR MAINNET",
+                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppTheme.dangerRed),
+                    ),
                   ),
                 ],
               ),

@@ -19,14 +19,20 @@ def test_schema_migrations_and_wal_mode(temp_db_path):
     # Verify migration table
     cursor.execute("SELECT MAX(version) FROM schema_migrations;")
     max_v = cursor.fetchone()[0]
-    assert max_v == 3
+    assert max_v == 4
 
     # Verify indexes exist
     cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_market_events_token';")
     assert cursor.fetchone() is not None
 
-    # Verify system_config table exists
+    # Verify system_config and multi-desk V4 tables exist
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='system_config';")
+    assert cursor.fetchone() is not None
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='desks';")
+    assert cursor.fetchone() is not None
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='desk_tasks';")
+    assert cursor.fetchone() is not None
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='desk_reports';")
     assert cursor.fetchone() is not None
     conn.close()
 

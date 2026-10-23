@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme.dart';
 import '../providers/app_providers.dart';
+import 'desk_components.dart';
 
 class LearningView extends ConsumerStatefulWidget {
   const LearningView({super.key});
@@ -18,6 +19,7 @@ class _LearningViewState extends ConsumerState<LearningView> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(terminalControllerProvider).fetchLearningMetrics();
+      ref.read(terminalControllerProvider).fetchStrategyBenchmarks();
     });
   }
 
@@ -38,6 +40,8 @@ class _LearningViewState extends ConsumerState<LearningView> {
   @override
   Widget build(BuildContext context) {
     final metrics = ref.watch(learningMetricsProvider);
+    final tasks = ref.watch(deskTasksProvider).where((t) => t.deskId == "DESK_QUANT").toList();
+    final reports = ref.watch(deskReportsProvider).where((r) => r.deskId == "DESK_QUANT").toList();
 
     final totalDecisions = metrics["total_decisions_evaluated"] ?? 0;
     final accuracyRate = ((metrics["correct_decisions_rate"] ?? 0.0) as num).toDouble() * 100.0;
@@ -48,31 +52,33 @@ class _LearningViewState extends ConsumerState<LearningView> {
 
     final byAgent = (metrics["results_by_agent"] as Map<String, dynamic>?) ?? {};
     final byStrategy = (metrics["results_by_strategy"] as Map<String, dynamic>?) ?? {};
-    final byTier = (metrics["results_by_liquidity_tier"] as Map<String, dynamic>?) ?? {};
 
     return Scaffold(
       backgroundColor: AppTheme.scaffoldBg,
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header with action
+            const DeskWorkspaceHeader(deskId: "DESK_QUANT"),
+            const SizedBox(height: 12),
+
+            // Header with action (Preserves exact text tested in widget_test.dart)
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Expanded(
+                const Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        "MEASURABLE LEARNING ENGINE",
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.predatorGreen),
-                      ),
-                      const SizedBox(height: 4),
                       Text(
-                        "Empirical multi-agent decision evaluation across temporal splits without lookahead bias",
-                        style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+                        "MEASURABLE LEARNING ENGINE",
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.predatorGreen),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        "Chronological TRAIN (60%) / VALIDATION (20%) / TEST (20%) splits without lookahead bias. Includes 25 bps fee + slippage.",
+                        style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
                       ),
                     ],
                   ),
@@ -91,9 +97,25 @@ class _LearningViewState extends ConsumerState<LearningView> {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
 
-            // Metrics Cards Layout (Wrap for responsiveness)
+            // Mandatory Research Disclaimer
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceBg,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: AppTheme.borderCol),
+              ),
+              child: const Text(
+                "QUANT RESEARCH NOTICE: Historical backtests and simulated returns incorporate transaction-cost assumptions and uncertainty bounds; they are never proof of future profitability.",
+                style: TextStyle(fontSize: 10, color: AppTheme.warningOrange),
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Metrics Cards Layout
             LayoutBuilder(
               builder: (context, constraints) {
                 final cardWidth = constraints.maxWidth > 900
@@ -113,161 +135,66 @@ class _LearningViewState extends ConsumerState<LearningView> {
                 );
               },
             ),
-            const SizedBox(height: 24),
-
-            // Breakdowns Row
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Agent Performance Attribution
-                Expanded(
-                  flex: 3,
-                  child: Card(
-                    color: AppTheme.cardBg,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text("AGENT PERFORMANCE ATTRIBUTION", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.accentCyan)),
-                          const Divider(height: 20),
-                          if (byAgent.isEmpty)
-                            const Text("No agent outcome data available", style: TextStyle(color: AppTheme.textMuted, fontSize: 12))
-                          else
-                            ...byAgent.entries.map((e) {
-                              final data = e.value as Map<String, dynamic>;
-                              final pPower = ((data["predictive_power"] ?? data["veto_accuracy"] ?? 0.8) as num).toDouble() * 100.0;
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 6),
-                                child: Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 80,
-                                      child: Text(e.key, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                                    ),
-                                    Expanded(
-                                      child: LinearProgressIndicator(
-                                        value: pPower / 100.0,
-                                        backgroundColor: AppTheme.surfaceBg,
-                                        valueColor: const AlwaysStoppedAnimation(AppTheme.predatorGreen),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Text("${pPower.toStringAsFixed(0)}% Power", style: const TextStyle(fontSize: 11, color: AppTheme.textMuted)),
-                                  ],
-                                ),
-                              );
-                            }),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-
-                // Liquidity Tier Breakdown
-                Expanded(
-                  flex: 3,
-                  child: Card(
-                    color: AppTheme.cardBg,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text("PERFORMANCE BY LIQUIDITY BRACKET", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.accentCyan)),
-                          const Divider(height: 20),
-                          if (byTier.isEmpty)
-                            const Text("No liquidity tier data available", style: TextStyle(color: AppTheme.textMuted, fontSize: 12))
-                          else
-                            ...byTier.entries.map((e) {
-                              final data = e.value as Map<String, dynamic>;
-                              final acc = ((data["accuracy"] ?? 0.0) as num).toDouble() * 100.0;
-                              final ret = ((data["avg_return_pct"] ?? 0.0) as num).toDouble();
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 6),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(e.key, style: const TextStyle(fontSize: 12)),
-                                    Row(
-                                      children: [
-                                        Text("${acc.toStringAsFixed(1)}% Acc", style: const TextStyle(fontSize: 11, color: AppTheme.predatorGreen)),
-                                        const SizedBox(width: 12),
-                                        Text("${ret >= 0 ? '+' : ''}${ret.toStringAsFixed(2)}% Ret", style: TextStyle(fontSize: 11, color: ret >= 0 ? AppTheme.predatorGreen : AppTheme.dangerRed)),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
             const SizedBox(height: 16),
 
-            // Versioned Strategy Benchmarks
+            // Agent Attribution & Strategy Benchmarks
             Card(
               color: AppTheme.cardBg,
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(14),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text("STRATEGY VERSION BENCHMARKS (TEMPORAL VALIDATION)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.accentCyan)),
-                    const SizedBox(height: 8),
-                    const Text("Strategies must be strictly tested on historical validation splits before promotion to active paper trading.", style: TextStyle(fontSize: 11, color: AppTheme.textMuted)),
-                    const Divider(height: 20),
-                    if (byStrategy.isEmpty)
-                      const Text("No versioned benchmark records found", style: TextStyle(color: AppTheme.textMuted, fontSize: 12))
+                    const Text("AGENT PERFORMANCE ATTRIBUTION & STRATEGY BENCHMARKS", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppTheme.accentCyan)),
+                    const Divider(height: 16),
+                    if (byAgent.isEmpty && byStrategy.isEmpty)
+                      const Text("No evaluated agent outcomes yet.", style: TextStyle(color: AppTheme.textMuted, fontSize: 11))
                     else
-                      Table(
-                        columnWidths: const {
-                          0: FlexColumnWidth(2),
-                          1: FlexColumnWidth(1),
-                          2: FlexColumnWidth(1),
-                          3: FlexColumnWidth(1),
-                          4: FlexColumnWidth(2),
-                        },
-                        children: [
-                          const TableRow(
-                            decoration: BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.surfaceBg))),
+                      ...byAgent.entries.map((e) {
+                        final data = e.value as Map<String, dynamic>;
+                        final pPower = ((data["predictive_power"] ?? data["accuracy_rate_pct"] ?? 75.0) as num).toDouble();
+                        final displayPct = pPower <= 1.0 ? pPower * 100.0 : pPower;
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
                             children: [
-                              Padding(padding: EdgeInsets.all(8), child: Text("Strategy Version", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
-                              Padding(padding: EdgeInsets.all(8), child: Text("Sample", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
-                              Padding(padding: EdgeInsets.all(8), child: Text("Accuracy", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
-                              Padding(padding: EdgeInsets.all(8), child: Text("Avg Return", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
-                              Padding(padding: EdgeInsets.all(8), child: Text("Status", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                              SizedBox(width: 80, child: Text(e.key, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                              Expanded(
+                                child: LinearProgressIndicator(
+                                  value: (displayPct / 100.0).clamp(0.0, 1.0),
+                                  backgroundColor: AppTheme.surfaceBg,
+                                  valueColor: const AlwaysStoppedAnimation(AppTheme.predatorGreen),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Text("${displayPct.toStringAsFixed(1)}%", style: const TextStyle(fontSize: 11, color: AppTheme.textMuted)),
                             ],
                           ),
-                          ...byStrategy.entries.map((e) {
-                            final data = e.value as Map<String, dynamic>;
-                            final count = data["count"] ?? 0;
-                            final acc = ((data["accuracy"] ?? 0.0) as num).toDouble() * 100.0;
-                            final ret = ((data["avg_return_pct"] ?? 0.0) as num).toDouble();
-                            return TableRow(
-                              children: [
-                                Padding(padding: const EdgeInsets.all(8), child: Text(e.key, style: const TextStyle(fontSize: 11, color: AppTheme.predatorGreen))),
-                                Padding(padding: const EdgeInsets.all(8), child: Text("$count", style: const TextStyle(fontSize: 11))),
-                                Padding(padding: const EdgeInsets.all(8), child: Text("${acc.toStringAsFixed(1)}%", style: const TextStyle(fontSize: 11))),
-                                Padding(padding: const EdgeInsets.all(8), child: Text("${ret.toStringAsFixed(2)}%", style: TextStyle(fontSize: 11, color: ret >= 0 ? AppTheme.predatorGreen : AppTheme.dangerRed))),
-                                const Padding(
-                                  padding: EdgeInsets.all(8),
-                                  child: Text("ACTIVE BASELINE", style: TextStyle(fontSize: 10, color: AppTheme.predatorGreen, fontWeight: FontWeight.bold)),
-                                ),
-                              ],
-                            );
-                          }),
-                        ],
-                      ),
+                        );
+                      }),
                   ],
                 ),
               ),
             ),
+            const SizedBox(height: 16),
+
+            const Text(
+              "DESK 4 QUANT RESEARCH REPORTS (QUANT)",
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.solanaCyan),
+            ),
+            const SizedBox(height: 8),
+            if (reports.isEmpty)
+              const Text("No quant research reports generated yet.", style: TextStyle(color: AppTheme.textMuted, fontSize: 11))
+            else
+              ...reports.take(6).map((r) => StructuredReportCard(report: r)),
+
+            const SizedBox(height: 14),
+            const Text(
+              "DESK 4 TASK EXECUTION HISTORY",
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.solanaCyan),
+            ),
+            const SizedBox(height: 8),
+            DeskTaskExecutionList(tasks: tasks),
           ],
         ),
       ),

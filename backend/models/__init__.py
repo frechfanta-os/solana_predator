@@ -13,6 +13,15 @@ from backend.models.paper import (
     PortfolioSnapshot,
     ExitDecision,
 )
+from backend.models.desk import (
+    DeskId,
+    ExecutionState,
+    AgentTaskExecution,
+    StructuredAgentReport,
+    DeskStatusRecord,
+    WatchlistItem,
+    TerminalWsEnvelope,
+)
 
 __all__ = [
     "MarketSource",
@@ -36,4 +45,11 @@ __all__ = [
     "PaperPosition",
     "PortfolioSnapshot",
     "ExitDecision",
+    "DeskId",
+    "ExecutionState",
+    "AgentTaskExecution",
+    "StructuredAgentReport",
+    "DeskStatusRecord",
+    "WatchlistItem",
+    "TerminalWsEnvelope",
 ]

@@ -85,7 +85,21 @@ async def lifespan(app: FastAPI):
     broadcast_svc = LiveBroadcastService(rpc_client, repo)
     live_order_mgr = LiveOrderManager(repo, risk_guard, quote_svc, tx_builder, broadcast_svc, wallet_svc)
 
-    # 4. Create Predator Engine
+    # 4. Create Multi-Desk Coordinator & Predator Engine
+    from backend.desks.coordinator import MultiDeskCoordinator
+    from backend.market.composite_provider import CompositeMarketDataProvider
+
+    market_provider = CompositeMarketDataProvider()
+    desk_coordinator = MultiDeskCoordinator(
+        repository=repo,
+        agent_orchestrator=agent_orchestrator,
+        token_radar=token_radar,
+        whale_engine=whale_engine,
+        learning_evaluator=evaluator,
+        risk_guard=risk_guard,
+        market_provider=market_provider,
+    )
+
     engine = PredatorEngine(
         repository=repo,
         event_bus=event_bus,
@@ -100,6 +114,7 @@ async def lifespan(app: FastAPI):
         exit_monitor=exit_monitor,
         live_order_manager=live_order_mgr,
         learning_evaluator=evaluator,
+        desk_coordinator=desk_coordinator,
     )
     engine.set_ws_broadcast_callback(ws_manager.broadcast)
     await engine.initialize()
@@ -114,12 +129,16 @@ async def lifespan(app: FastAPI):
     routes_module.wallet_service_instance = wallet_svc
     routes_module.risk_guard_instance = risk_guard
     routes_module.llm_client_instance = llm_client
+    routes_module.market_provider_instance = market_provider
+    routes_module.desk_coordinator_instance = desk_coordinator
+    routes_module.ws_manager_instance = ws_manager
 
     yield
 
-    # 5. Shutdown Sequence
+    # 6. Shutdown Sequence
     logger.info("Shutting down %s...", settings.PROJECT_NAME)
     await engine.shutdown()
+    await market_provider.close()
     await rpc_client.close()
     await llm_client.close()
 
@@ -144,8 +163,9 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 
 
-# WebSocket Streaming Endpoint
+# WebSocket Streaming Endpoints (/ws and /ws/live)
 @app.websocket("/ws")
+@app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket):
     await ws_manager.connect(websocket)
     try:
